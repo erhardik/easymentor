@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h3>Student Master</h3>
+
+<div class="card p-3 mb-4">
+
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        {{form.file}}
+        <button class="btn btn-success mt-2">Upload Excel</button>
+    </form>
+
+    {% if message %}
+    <div class="alert alert-info mt-2">{{message}}</div>
+    {% endif %}
+
+</div>
+
+<table class="table table-bordered table-sm">
+<thead>
+<tr>
+<th>Roll</th>
+<th>Enrollment</th>
+<th>Name</th>
+<th>Mentor</th>
+<th>Father Mobile</th>
+<th>Mother Mobile</th>
+</tr>
+</thead>
+
+<tbody>
+{% for s in students %}
+<tr>
+<td>{{s.roll_no}}</td>
+<td>{{s.enrollment}}</td>
+<td>{{s.name}}</td>
+<td>{{s.mentor.name}}</td>
+<td>{{s.father_mobile}}</td>
+<td>{{s.mother_mobile}}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+{% endblock %}
