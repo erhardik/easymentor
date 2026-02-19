@@ -26,15 +26,13 @@ import {
   logout,
   markMessage,
   saveCall,
-  setApiBaseUrl,
 } from "./src/api";
-import { DEFAULT_API_BASE_URL, MENTOR_PASSWORD } from "./src/constants";
+import { MENTOR_PASSWORD } from "./src/constants";
 
 const talkedOptions = ["father", "mother", "guardian"];
 const SESSION_KEY = "easymentor_session_v1";
 const WEEK_KEY = "easymentor_week_v1";
 const RETRY_COUNT_KEY = "easymentor_retry_count_v1";
-const SERVER_URL_KEY = "easymentor_server_url_v1";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -64,15 +62,28 @@ async function configureNotificationChannel() {
   }
 }
 
-function normalizeServerUrl(url) {
-  const clean = (url || "").trim().replace(/\/+$/, "");
-  if (!clean) {
-    return "";
+function statusPriority(status) {
+  if (status === "not_received") {
+    return 0;
   }
-  if (clean.startsWith("http://") || clean.startsWith("https://")) {
-    return clean;
+  if (status === "received") {
+    return 2;
   }
-  return `http://${clean}`;
+  return 1;
+}
+
+function orderCallRecords(items) {
+  const list = [...(items || [])];
+  list.sort((a, b) => {
+    const p = statusPriority(a.final_status) - statusPriority(b.final_status);
+    if (p !== 0) {
+      return p;
+    }
+    const ra = Number(a?.student?.roll_no || 999999);
+    const rb = Number(b?.student?.roll_no || 999999);
+    return ra - rb;
+  });
+  return list;
 }
 
 export default function App() {
@@ -86,10 +97,6 @@ export default function App() {
   const [records, setRecords] = useState([]);
   const [allDone, setAllDone] = useState(false);
   const [retryRecords, setRetryRecords] = useState([]);
-
-  const [serverUrl, setServerUrl] = useState(DEFAULT_API_BASE_URL);
-  const [serverInput, setServerInput] = useState(DEFAULT_API_BASE_URL);
-  const [serverModalVisible, setServerModalVisible] = useState(false);
 
   const [activeCall, setActiveCall] = useState(null);
   const [callStart, setCallStart] = useState(0);
@@ -179,7 +186,7 @@ export default function App() {
       return;
     }
     const callData = await getCalls(authToken, chosenWeek);
-    setRecords(callData.records || []);
+    setRecords(orderCallRecords(callData.records || []));
     setAllDone(Boolean(callData.all_done));
     if (callData.all_done) {
       const retryData = await getRetryList(authToken, chosenWeek);
@@ -194,35 +201,6 @@ export default function App() {
     }
   }
 
-  async function saveServerUrl() {
-    const normalized = normalizeServerUrl(serverInput);
-    if (!normalized) {
-      Alert.alert("Invalid URL", "Please enter a valid server URL.");
-      return;
-    }
-    setApiBaseUrl(normalized);
-    setServerUrl(normalized);
-    setServerInput(normalized);
-    await AsyncStorage.setItem(SERVER_URL_KEY, normalized);
-    setServerModalVisible(false);
-
-    if (!token) {
-      return;
-    }
-    setLoading(true);
-    try {
-      await loadDashboard(token, selectedWeek, false);
-      Alert.alert("Updated", "Server URL saved and data refreshed.");
-    } catch (err) {
-      Alert.alert(
-        "Server unreachable",
-        "URL saved, but current session could not sync. Verify server and login again if needed."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
     (async () => {
       await configureNotificationChannel();
@@ -234,12 +212,6 @@ export default function App() {
     let mounted = true;
     (async () => {
       try {
-        const storedServerRaw = await AsyncStorage.getItem(SERVER_URL_KEY);
-        const normalizedServer = normalizeServerUrl(storedServerRaw) || DEFAULT_API_BASE_URL;
-        setApiBaseUrl(normalizedServer);
-        setServerUrl(normalizedServer);
-        setServerInput(normalizedServer);
-
         const raw = await AsyncStorage.getItem(SESSION_KEY);
         const storedWeekRaw = await AsyncStorage.getItem(WEEK_KEY);
         const storedWeek = storedWeekRaw ? Number(storedWeekRaw) : null;
@@ -358,6 +330,10 @@ export default function App() {
     if (!activeCall) {
       return;
     }
+    if (status === "received" && !remark.trim()) {
+      Alert.alert("Remark required", "Please enter parent remark for received calls.");
+      return;
+    }
     setLoading(true);
     try {
       await saveCall(token, {
@@ -369,6 +345,8 @@ export default function App() {
       });
       setModalVisible(false);
       setActiveCall(null);
+      setRemark("");
+      setDuration("");
       await loadDashboard(token, selectedWeek, true);
     } catch (err) {
       Alert.alert("Save failed", String(err.message || err));
@@ -421,16 +399,6 @@ export default function App() {
         <View style={styles.loginCard}>
           <Text style={styles.title}>EasyMentor Mobile</Text>
           <Text style={styles.subtitle}>Mentor Login</Text>
-          <Text style={styles.serverText}>Server: {serverUrl}</Text>
-          <TouchableOpacity
-            style={styles.outlineButton}
-            onPress={() => {
-              setServerInput(serverUrl);
-              setServerModalVisible(true);
-            }}
-          >
-            <Text style={styles.outlineButtonText}>Change Server</Text>
-          </TouchableOpacity>
           <TextInput
             style={styles.input}
             placeholder="Mentor short name"
@@ -455,18 +423,8 @@ export default function App() {
           <Text style={styles.subtitle}>
             Calls done: {completedCount}/{records.length}
           </Text>
-          <Text style={styles.serverTextSmall}>{serverUrl}</Text>
         </View>
         <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.outlineButton}
-            onPress={() => {
-              setServerInput(serverUrl);
-              setServerModalVisible(true);
-            }}
-          >
-            <Text style={styles.outlineButtonText}>Server</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={styles.outlineButton} onPress={onLogout}>
             <Text style={styles.outlineButtonText}>Logout</Text>
           </TouchableOpacity>
@@ -495,6 +453,19 @@ export default function App() {
         contentContainerStyle={{ paddingBottom: 150 }}
         renderItem={({ item }) => {
           const finalStatus = item.final_status || "pending";
+          const isReceived = finalStatus === "received";
+          const isNotReceived = finalStatus === "not_received";
+
+          let actionLabel = "Call Parent";
+          let actionStyle = styles.primaryButton;
+          if (isReceived) {
+            actionLabel = "Call Done";
+            actionStyle = styles.doneButton;
+          } else if (isNotReceived) {
+            actionLabel = "Call Not Received";
+            actionStyle = styles.notReceivedButton;
+          }
+
           return (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>
@@ -505,8 +476,12 @@ export default function App() {
                 Weekly: {item.week_percentage ?? "-"} | Overall: {item.overall_percentage ?? "-"}
               </Text>
               <Text style={styles.cardMeta}>Status: {finalStatus}</Text>
-              <TouchableOpacity style={styles.primaryButton} onPress={() => placeCall(item)}>
-                <Text style={styles.primaryButtonText}>Call Parent</Text>
+              <TouchableOpacity
+                style={actionStyle}
+                onPress={() => placeCall(item)}
+                disabled={isReceived}
+              >
+                <Text style={styles.primaryButtonText}>{actionLabel}</Text>
               </TouchableOpacity>
             </View>
           );
@@ -608,38 +583,6 @@ export default function App() {
         </View>
       </Modal>
 
-      <Modal
-        visible={serverModalVisible}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setServerModalVisible(false)}
-      >
-        <View style={styles.modalBg}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Server URL</Text>
-            <Text style={styles.modalMeta}>Example: http://10.86.24.113:8000</Text>
-            <TextInput
-              style={styles.input}
-              value={serverInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-              onChangeText={setServerInput}
-              placeholder="http://<ip>:8000"
-            />
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={() => setServerModalVisible(false)}
-              >
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.primaryButton} onPress={saveServerUrl}>
-                <Text style={styles.primaryButtonText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -668,16 +611,6 @@ const styles = StyleSheet.create({
   subtitle: {
     color: "#3f5873",
     marginTop: 2,
-  },
-  serverText: {
-    color: "#1b4267",
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  serverTextSmall: {
-    color: "#4f6a86",
-    marginTop: 4,
-    fontSize: 12,
   },
   loginCard: {
     marginTop: 120,
@@ -879,5 +812,20 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     color: "#fff",
     fontWeight: "600",
+  },
+  doneButton: {
+    backgroundColor: "#1f8b4c",
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    opacity: 0.9,
+  },
+  notReceivedButton: {
+    backgroundColor: "#d4a017",
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: "center",
   },
 });
