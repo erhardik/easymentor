@@ -53,13 +53,14 @@ def login_page(request):
 def upload_students(request):
 
     message = ""
+    skipped_rows = []
 
     if request.method == 'POST':
         form = UploadFileForm(request.POST, request.FILES)
         if form.is_valid():
             file = request.FILES['file']
             try:
-                added, updated, skipped = import_students_from_excel(file)
+                added, updated, skipped, skipped_rows = import_students_from_excel(file)
                 message = f"Added: {added} | Updated: {updated} | Skipped: {skipped}"
             except Exception as e:
                 message = f"Upload failed: {str(e)}"
@@ -71,7 +72,8 @@ def upload_students(request):
     return render(request, 'upload.html', {
         'form': form,
         'message': message,
-        'students': students
+        'students': students,
+        'skipped_rows': skipped_rows[:200],
     })
 
 # ---------------- ATTENDANCE VIEW & UPLOAD ----------------
@@ -467,15 +469,19 @@ def coordinator_dashboard(request):
             week_no=week, student__mentor=m, call_required=True
         ).count()
 
-        done = CallRecord.objects.filter(
-            week_no=week, student__mentor=m, final_status__isnull=False
+        received = CallRecord.objects.filter(
+            week_no=week, student__mentor=m, final_status="received"
         ).count()
 
-        pending = need_call - done
+        not_received = CallRecord.objects.filter(
+            week_no=week, student__mentor=m, final_status="not_received"
+        ).count()
 
-        message_pending = CallRecord.objects.filter(
-            week_no=week, student__mentor=m,
-            final_status="not_received", message_sent=False
+        done = received + not_received
+        not_done = max(need_call - done, 0)
+
+        message_sent = CallRecord.objects.filter(
+            week_no=week, student__mentor=m, message_sent=True
         ).count()
 
         percent = round((done/need_call)*100,1) if need_call else 0
@@ -485,8 +491,10 @@ def coordinator_dashboard(request):
             "students":total_students,
             "need_call":need_call,
             "done":done,
-            "pending":pending,
-            "msg":message_pending,
+            "received":received,
+            "not_received":not_received,
+            "not_done":not_done,
+            "msg_sent":message_sent,
             "percent":percent
         })
 
