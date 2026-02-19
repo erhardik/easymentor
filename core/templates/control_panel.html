@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h4>Coordinator Control Panel</h4>
+
+<input type="text" id="search" class="form-control mb-3" placeholder="Search student...">
+
+<table class="table table-hover" id="studentTable">
+<thead>
+<tr>
+<th>Roll</th>
+<th>Name</th>
+<th>Mentor</th>
+<th>Father</th>
+<th>Mother</th>
+<th>Print</th>
+</tr>
+</thead>
+
+<tbody>
+{% for s in students %}
+<tr>
+<td>{{s.roll_no}}</td>
+<td>{{s.name}}</td>
+<td>{{s.mentor.name}}</td>
+<td>
+<input class="form-control form-control-sm edit"
+data-enroll="{{s.enrollment}}"
+data-field="father"
+value="{{s.father_mobile}}">
+</td>
+
+<td>
+<input class="form-control form-control-sm edit"
+data-enroll="{{s.enrollment}}"
+data-field="mother"
+value="{{s.mother_mobile}}">
+</td>
+
+<td>
+<a target="_blank" href="/print-student/{{s.enrollment}}/" class="btn btn-sm btn-lj">
+Print
+</a>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+<script>
+document.getElementById("search").onkeyup=function(){
+let val=this.value.toLowerCase();
+document.querySelectorAll("#studentTable tbody tr").forEach(r=>{
+r.style.display=r.innerText.toLowerCase().includes(val)?"":"none";
+});
+}
+</script>
+
+<script>
+
+document.querySelectorAll(".edit").forEach(input=>{
+
+input.addEventListener("change",function(){
+
+fetch("/update-mobile/",{
+method:"POST",
+headers:{
+'X-CSRFToken':'{{ csrf_token }}'
+},
+body:new URLSearchParams({
+enrollment:this.dataset.enroll,
+field:this.dataset.field,
+value:this.value
+})
+})
+.then(r=>r.json())
+.then(()=>{
+this.style.background="#d4edda";   // green saved effect
+setTimeout(()=>this.style.background="",800);
+});
+
+});
+
+});
+
+</script>
+
+{% endblock %}
