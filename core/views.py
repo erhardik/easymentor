@@ -58,8 +58,11 @@ def upload_students(request):
         form = UploadFileForm(request.POST, request.FILES)
         if form.is_valid():
             file = request.FILES['file']
-            added, updated = import_students_from_excel(file)
-            message = f"Added: {added} | Updated: {updated}"
+            try:
+                added, updated, skipped = import_students_from_excel(file)
+                message = f"Added: {added} | Updated: {updated} | Skipped: {skipped}"
+            except Exception as e:
+                message = f"Upload failed: {str(e)}"
     else:
         form = UploadFileForm()
 
