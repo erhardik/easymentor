@@ -63,6 +63,23 @@ def clean_number(value):
     return value
 
 
+def safe_int(value):
+    value = clean_number(value)
+    if not value:
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def safe_text(value, max_len):
+    text = str(value or "").strip()
+    if not text or text.lower() == "nan":
+        return ""
+    return text[:max_len]
+
+
 # ---------------- NORMALIZE TEXT ----------------
 def normalize(text):
     return str(text).lower().replace("\n", " ").strip()
@@ -120,42 +137,45 @@ def import_students_from_excel(file):
 
     added = 0
     updated = 0
+    skipped = 0
 
     for _, row in df.iterrows():
 
-        enrollment = clean_number(row.get(enrollment_col))
-        if not enrollment:
-            continue
+        try:
+            enrollment = clean_number(row.get(enrollment_col))
+            if not enrollment:
+                skipped += 1
+                continue
 
-        name = str(row.get(name_col) or "").strip()
-        roll = clean_number(row.get(roll_col))
-        mentor_name = str(row.get(mentor_col) or "").strip()
+            # model-safe values
+            name = safe_text(row.get(name_col), 100)
+            roll = safe_int(row.get(roll_col))
+            mentor_name = safe_text(row.get(mentor_col), 50) or "UNKNOWN"
 
-        father = format_phone(clean_number(row.get(father_col)))
-        mother = format_phone(clean_number(row.get(mother_col)))
-        batch = str(row.get(batch_col) or "").strip()
+            father = format_phone(clean_number(row.get(father_col)))[:15]
+            mother = format_phone(clean_number(row.get(mother_col)))[:15]
+            batch = safe_text(row.get(batch_col), 20)
 
-        # avoid empty mentor
-        if not mentor_name:
-            mentor_name = "UNKNOWN"
+            mentor, _ = Mentor.objects.get_or_create(name=mentor_name)
 
-        mentor, _ = Mentor.objects.get_or_create(name=mentor_name)
+            _, created = Student.objects.update_or_create(
+                enrollment=enrollment[:20],
+                defaults={
+                    'name': name,
+                    'roll_no': roll,
+                    'mentor': mentor,
+                    'father_mobile': father,
+                    'mother_mobile': mother,
+                    'batch': batch
+                }
+            )
 
-        student, created = Student.objects.update_or_create(
-            enrollment=enrollment,
-            defaults={
-                'name': name,
-                'roll_no': roll,
-                'mentor': mentor,
-                'father_mobile': father,
-                'mother_mobile': mother,
-                'batch': batch
-            }
-        )
+            if created:
+                added += 1
+            else:
+                updated += 1
+        except Exception:
+            # Skip bad rows instead of failing whole upload
+            skipped += 1
 
-        if created:
-            added += 1
-        else:
-            updated += 1
-
-    return added, updated
+    return added, updated, skipped
