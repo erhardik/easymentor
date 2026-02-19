@@ -203,13 +203,18 @@ def api_mobile_save_call(request):
         call.attempt2_time = timezone.now()
 
     if status == "received":
+        if not reason:
+            return JsonResponse(
+                {"ok": False, "msg": "Parent remark is required for received calls"},
+                status=400,
+            )
         if talked not in {"father", "mother", "guardian"}:
             talked = "guardian"
         call.final_status = "received"
         call.talked_with = talked
         call.duration = duration
         call.parent_reason = reason
-    elif call.attempt2_time:
+    elif status == "not_received":
         call.final_status = "not_received"
 
     call.save()
