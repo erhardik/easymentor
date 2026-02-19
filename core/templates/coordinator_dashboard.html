@@ -53,9 +53,11 @@
                         <th>Mentor</th>
                         <th>Total Students</th>
                         <th>Need Call</th>
-                        <th>Calls Done</th>
-                        <th>Pending</th>
-                        <th>Message Pending</th>
+                        <th>Call Done</th>
+                        <th>Call Received</th>
+                        <th>Call Not Received</th>
+                        <th>Call Not Done</th>
+                        <th>Message Sent</th>
                         <th>Completion %</th>
                     </tr>
                 </thead>
@@ -77,12 +79,20 @@
                             {{r.done}}
                         </td>
 
+                        <td class="text-success fw-bold">
+                            {{r.received}}
+                        </td>
+
                         <td class="text-warning fw-bold">
-                            {{r.pending}}
+                            {{r.not_received}}
                         </td>
 
                         <td class="text-primary fw-bold">
-                            {{r.msg}}
+                            {{r.not_done}}
+                        </td>
+
+                        <td class="text-dark fw-bold">
+                            {{r.msg_sent}}
                         </td>
 
                         <td>
