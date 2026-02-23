@@ -2,7 +2,7 @@
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h3 class="mb-0">Other Calls - {{mentor.name}}</h3>
+    <h3 class="mb-0">Direct Calls - {{mentor.name}}</h3>
 </div>
 
 {% if not records %}
@@ -131,8 +131,18 @@ function openCallResultModalIfPending(){
     document.getElementById("call_id").value = pending.id;
     document.getElementById("call_target").value = pending.target || "";
     document.getElementById("duration").value = estimatedMinutes;
+    document.getElementById("call_category").value = "less_attendance";
+    document.getElementById("week_no").value = "";
+    document.getElementById("day_no").value = "";
+    document.getElementById("exam_name").value = "";
+    document.getElementById("subject_name").value = "";
+    document.getElementById("marks_obtained").value = "";
+    document.getElementById("marks_out_of").value = "";
+    document.getElementById("remark").value = "";
+    document.getElementById("call_reason").value = "";
     document.getElementById("autoDurationNote").innerText =
         elapsedSec ? `Auto-estimated duration: ${elapsedSec}s (editable)` : "";
+    onCategoryChange();
 
     modalShownForPending = true;
     new bootstrap.Modal(document.getElementById("callResultModal")).show();
@@ -167,6 +177,21 @@ function markReceived(){
     let duration = document.getElementById("duration").value;
     let remark = document.getElementById("remark").value;
     let callReason = document.getElementById("call_reason").value;
+    let callCategory = document.getElementById("call_category").value;
+    let weekNo = document.getElementById("week_no").value;
+    let dayNo = document.getElementById("day_no").value;
+    let examName = document.getElementById("exam_name").value;
+    let subjectName = document.getElementById("subject_name").value;
+    let marksObtained = document.getElementById("marks_obtained").value;
+    let marksOutOf = document.getElementById("marks_out_of").value;
+    if(callCategory === "less_attendance" && (!weekNo || !dayNo)){
+        alert("Please enter Week Number and Day Number.");
+        return;
+    }
+    if(callCategory === "poor_result" && (!examName.trim() || !subjectName.trim())){
+        alert("Please enter Exam Name and Subject Name.");
+        return;
+    }
 
     fetch("/save-other-call/",{
         method:"POST",
@@ -174,22 +199,97 @@ function markReceived(){
             "Content-Type":"application/x-www-form-urlencoded",
             "X-CSRFToken":"{{csrf_token}}"
         },
-        body:`id=${id}&target=${target}&status=received&talked=${talked}&duration=${duration}&remark=${encodeURIComponent(remark)}&call_reason=${encodeURIComponent(callReason)}`
-    }).then(()=>{ clearPendingCall(); location.reload(); });
+        body:`id=${id}&target=${target}&status=received&talked=${talked}&duration=${duration}&call_category=${callCategory}&week_no=${encodeURIComponent(weekNo)}&day_no=${encodeURIComponent(dayNo)}&exam_name=${encodeURIComponent(examName)}&subject_name=${encodeURIComponent(subjectName)}&marks_obtained=${encodeURIComponent(marksObtained)}&marks_out_of=${encodeURIComponent(marksOutOf)}&remark=${encodeURIComponent(remark)}&call_reason=${encodeURIComponent(callReason)}`
+    })
+    .then(r => r.json())
+    .then(data => {
+        if(!data.ok){
+            alert(data.msg || "Unable to save call");
+            return;
+        }
+        clearPendingCall();
+        location.reload();
+    });
 }
 
 function markNotReceived(){
     let id = document.getElementById("call_id").value;
     let target = document.getElementById("call_target").value;
     let callReason = document.getElementById("call_reason").value;
+    let callCategory = document.getElementById("call_category").value;
+    let weekNo = document.getElementById("week_no").value;
+    let dayNo = document.getElementById("day_no").value;
+    let examName = document.getElementById("exam_name").value;
+    let subjectName = document.getElementById("subject_name").value;
+    let marksObtained = document.getElementById("marks_obtained").value;
+    let marksOutOf = document.getElementById("marks_out_of").value;
+    if(callCategory === "less_attendance" && (!weekNo || !dayNo)){
+        alert("Please enter Week Number and Day Number.");
+        return;
+    }
+    if(callCategory === "poor_result" && (!examName.trim() || !subjectName.trim())){
+        alert("Please enter Exam Name and Subject Name.");
+        return;
+    }
     fetch("/save-other-call/",{
         method:"POST",
         headers:{
             "Content-Type":"application/x-www-form-urlencoded",
             "X-CSRFToken":"{{csrf_token}}"
         },
-        body:`id=${id}&target=${target}&status=not_received&call_reason=${encodeURIComponent(callReason)}`
-    }).then(()=>{ clearPendingCall(); location.reload(); });
+        body:`id=${id}&target=${target}&status=not_received&call_category=${callCategory}&week_no=${encodeURIComponent(weekNo)}&day_no=${encodeURIComponent(dayNo)}&exam_name=${encodeURIComponent(examName)}&subject_name=${encodeURIComponent(subjectName)}&marks_obtained=${encodeURIComponent(marksObtained)}&marks_out_of=${encodeURIComponent(marksOutOf)}&call_reason=${encodeURIComponent(callReason)}`
+    })
+    .then(r => r.json())
+    .then(data => {
+        if(!data.ok){
+            alert(data.msg || "Unable to save call");
+            return;
+        }
+        clearPendingCall();
+        location.reload();
+    });
+}
+
+function onCategoryChange(){
+    const category = document.getElementById("call_category").value;
+    const lessWrap = document.getElementById("lessAttendanceFields");
+    const poorWrap = document.getElementById("poorResultFields");
+    const remark = document.getElementById("remark");
+    const reason = document.getElementById("call_reason");
+    const weekNo = document.getElementById("week_no");
+    const dayNo = document.getElementById("day_no");
+
+    if(category === "less_attendance"){
+        lessWrap.classList.remove("d-none");
+        poorWrap.classList.add("d-none");
+        if(!remark.value.trim()){
+            remark.value = "Sick";
+        }
+        const w = (weekNo.value || "").trim();
+        const d = (dayNo.value || "").trim();
+        reason.value = (w && d) ? `Absent on WK-${w} DAY-${d}` : "";
+    }else if(category === "poor_result"){
+        lessWrap.classList.add("d-none");
+        poorWrap.classList.remove("d-none");
+        if(!remark.value.trim()){
+            remark.value = "Student will Study more";
+        }
+    }else{
+        lessWrap.classList.add("d-none");
+        poorWrap.classList.add("d-none");
+    }
+}
+
+function updateAttendanceReasonPrefill(){
+    const category = document.getElementById("call_category").value;
+    if(category !== "less_attendance"){
+        return;
+    }
+    const weekNo = (document.getElementById("week_no").value || "").trim();
+    const dayNo = (document.getElementById("day_no").value || "").trim();
+    if(weekNo && dayNo){
+        document.getElementById("call_reason").value = `Absent on WK-${weekNo} DAY-${dayNo}`;
+    }
 }
 </script>
 
@@ -197,7 +297,7 @@ function markNotReceived(){
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Other Call Result</h5>
+        <h5 class="modal-title">Direct Call Result</h5>
       </div>
       <div class="modal-body">
         <input type="hidden" id="call_id">
@@ -216,6 +316,42 @@ function markNotReceived(){
             <label>Duration (minutes)</label>
             <input type="number" id="duration" class="form-control" min="1">
             <small id="autoDurationNote" class="text-muted"></small>
+        </div>
+        <div class="mb-2">
+            <label>Call Type</label>
+            <select id="call_category" class="form-control" onchange="onCategoryChange()">
+                <option value="less_attendance">Less Attendance</option>
+                <option value="poor_result">Poor Result</option>
+                <option value="other">Other</option>
+            </select>
+        </div>
+        <div id="lessAttendanceFields">
+            <div class="mb-2">
+                <label>Week Number</label>
+                <input type="number" id="week_no" class="form-control" min="1" oninput="updateAttendanceReasonPrefill()">
+            </div>
+            <div class="mb-2">
+                <label>Day Number</label>
+                <input type="number" id="day_no" class="form-control" min="1" oninput="updateAttendanceReasonPrefill()">
+            </div>
+        </div>
+        <div id="poorResultFields" class="d-none">
+            <div class="mb-2">
+                <label>Name of Exam</label>
+                <input type="text" id="exam_name" class="form-control" placeholder="T1 / T2 / T3 / T4 / REM">
+            </div>
+            <div class="mb-2">
+                <label>Subject Name</label>
+                <input type="text" id="subject_name" class="form-control">
+            </div>
+            <div class="mb-2">
+                <label>Marks Obtained</label>
+                <input type="number" step="0.01" id="marks_obtained" class="form-control">
+            </div>
+            <div class="mb-2">
+                <label>Out of Marks</label>
+                <input type="number" step="0.01" id="marks_out_of" class="form-control" placeholder="25 / 50 / 100">
+            </div>
         </div>
         <div class="mb-2">
             <label>Parents Remark</label>

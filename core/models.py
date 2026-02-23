@@ -287,6 +287,11 @@ class OtherCallRecord(models.Model):
         ("student", "Student"),
         ("father", "Father"),
     ]
+    CATEGORY_CHOICES = [
+        ("less_attendance", "Less Attendance"),
+        ("poor_result", "Poor Result"),
+        ("other", "Other"),
+    ]
 
     student = models.OneToOneField(Student, on_delete=models.CASCADE, related_name="other_call")
     mentor = models.ForeignKey(Mentor, on_delete=models.CASCADE, related_name="other_calls")
@@ -297,9 +302,14 @@ class OtherCallRecord(models.Model):
 
     final_status = models.CharField(max_length=20, choices=STATUS_CHOICES, null=True, blank=True)
     talked_with = models.CharField(max_length=20, choices=TALKED_CHOICES, null=True, blank=True)
+    call_category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default="other")
     duration = models.CharField(max_length=10, blank=True)
     parent_remark = models.TextField(blank=True)
     call_done_reason = models.TextField(blank=True)
+    exam_name = models.CharField(max_length=50, blank=True)
+    subject_name = models.CharField(max_length=120, blank=True)
+    marks_obtained = models.FloatField(null=True, blank=True)
+    marks_out_of = models.FloatField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

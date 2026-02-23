@@ -1,4 +1,8 @@
 # ---------- DJANGO ----------
+import io
+import re
+import zipfile
+
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth import authenticate, login
@@ -33,7 +37,7 @@ from .models import (
 from .utils import import_students_from_excel, resolve_mentor_identity
 from .attendance_utils import import_attendance
 from .result_utils import import_compiled_bulk_all, import_compiled_result_sheet, import_result_sheet
-from .pdf_report import generate_student_pdf
+from .pdf_report import generate_student_pdf, generate_student_prefilled_pdf
 from .module_utils import get_current_module
 
 TEST_NAMES = ["T1", "T2", "T3", "T4", "REMEDIAL"]
@@ -971,6 +975,13 @@ def save_other_call(request):
     remark = request.POST.get("remark")
     call_reason = request.POST.get("call_reason")
     target = request.POST.get("target")
+    call_category = (request.POST.get("call_category") or "other").strip().lower()
+    week_no_raw = (request.POST.get("week_no") or "").strip()
+    day_no_raw = (request.POST.get("day_no") or "").strip()
+    exam_name = (request.POST.get("exam_name") or "").strip()
+    subject_name = (request.POST.get("subject_name") or "").strip()
+    marks_obtained_raw = (request.POST.get("marks_obtained") or "").strip()
+    marks_out_of_raw = (request.POST.get("marks_out_of") or "").strip()
 
     if not call.attempt1_time:
         call.attempt1_time = timezone.now()
@@ -979,12 +990,65 @@ def save_other_call(request):
 
     if target in {"student", "father"}:
         call.last_called_target = target
+    if call_category not in {"less_attendance", "poor_result", "other"}:
+        call_category = "other"
+    call.call_category = call_category
+
+    if call_category == "less_attendance":
+        try:
+            week_no = int(week_no_raw)
+            day_no = int(day_no_raw)
+        except (TypeError, ValueError):
+            return JsonResponse({"ok": False, "msg": "Week number and day number are required."}, status=400)
+
+        # Store as attendance call record so it appears in SIF attendance section.
+        attendance_call, _ = CallRecord.objects.get_or_create(
+            student=call.student,
+            week_no=week_no,
+            defaults={"attempt1_time": timezone.now()},
+        )
+        if not attendance_call.attempt1_time:
+            attendance_call.attempt1_time = timezone.now()
+        elif not attendance_call.attempt2_time:
+            attendance_call.attempt2_time = timezone.now()
+
+        parent_text = (remark or "Sick").strip()
+        faculty_text = (call_reason or f"Absent on WK-{week_no} DAY-{day_no}").strip()
+        attendance_call.talked_with = talked or "father"
+        attendance_call.duration = duration or ""
+        attendance_call.parent_reason = f"PARENT::{parent_text}||FACULTY::{faculty_text}"
+        if status in {"received", "not_received"}:
+            attendance_call.final_status = status
+        attendance_call.save()
+        call.exam_name = ""
+        call.subject_name = ""
+        call.marks_obtained = None
+        call.marks_out_of = None
+
+    if call_category == "poor_result":
+        if not exam_name or not subject_name:
+            return JsonResponse({"ok": False, "msg": "Exam name and subject name are required."}, status=400)
+        call.exam_name = exam_name
+        call.subject_name = subject_name
+        try:
+            call.marks_obtained = float(marks_obtained_raw) if marks_obtained_raw else None
+            call.marks_out_of = float(marks_out_of_raw) if marks_out_of_raw else None
+        except ValueError:
+            return JsonResponse({"ok": False, "msg": "Marks must be numeric."}, status=400)
+    elif call_category == "other":
+        call.exam_name = ""
+        call.subject_name = ""
+        call.marks_obtained = None
+        call.marks_out_of = None
 
     if status == "received":
         call.final_status = "received"
         call.talked_with = talked
         call.duration = duration
-        call.parent_remark = remark or ""
+        if call_category == "poor_result":
+            call.parent_remark = (remark or "Student will Study more").strip()
+        else:
+            call.parent_remark = remark or ""
         call.call_done_reason = call_reason or ""
     elif status == "not_received":
         call.final_status = "not_received"
@@ -1262,6 +1326,56 @@ def print_student(request, enrollment):
     response['Content-Disposition'] = f'inline; filename="{student.name}.pdf"'
 
     generate_student_pdf(response, student)
+    return response
+
+
+def _safe_pdf_name(text):
+    cleaned = re.sub(r"[^A-Za-z0-9 _-]+", "", str(text or "")).strip()
+    cleaned = re.sub(r"\s+", "_", cleaned)
+    return cleaned or "Student"
+
+
+def mentor_prefilled_sif_pdf(request, enrollment):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+    module = _active_module(request)
+    student = Student.objects.select_related("mentor").filter(module=module, enrollment=enrollment, mentor=mentor).first()
+    if not student:
+        return HttpResponse("Unauthorized", status=403)
+
+    roll = student.roll_no if student.roll_no is not None else "NA"
+    filename = f"{roll}_{_safe_pdf_name(student.name)}_SIF.pdf"
+    response = HttpResponse(content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    generate_student_prefilled_pdf(response, student)
+    return response
+
+
+def mentor_prefilled_sif_zip(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+    module = _active_module(request)
+
+    students = list(
+        Student.objects.select_related("mentor")
+        .filter(module=module, mentor=mentor)
+        .order_by("roll_no", "name")
+    )
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for s in students:
+            pdf_bytes = io.BytesIO()
+            generate_student_prefilled_pdf(pdf_bytes, s)
+            roll = s.roll_no if s.roll_no is not None else "NA"
+            pdf_name = f"{roll}_{_safe_pdf_name(s.name)}_SIF.pdf"
+            zf.writestr(pdf_name, pdf_bytes.getvalue())
+
+    zip_name = f"{_safe_pdf_name(mentor.name)}_Prefilled_SIF.zip"
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = f'attachment; filename="{zip_name}"'
     return response
 
 

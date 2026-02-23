@@ -2,6 +2,9 @@
 {% block content %}
 
 <h4>PRINT SIF - {{ mentor.name }}</h4>
+<div class="mb-3">
+<a href="/mentor-prefilled-sif-all/" class="btn btn-sm btn-success">Download All Pre-filled SIF (ZIP)</a>
+</div>
 
 <input type="text" id="search" class="form-control mb-3" placeholder="Search student...">
 
@@ -15,6 +18,7 @@
 <th>Student Contact</th>
 <th>Father Contact</th>
 <th>Print</th>
+<th>Pre-filled SIF</th>
 </tr>
 </thead>
 
@@ -38,6 +42,9 @@ value="{{ s.father_mobile }}">
 </td>
 <td>
 <a target="_blank" href="/print-student/{{ s.enrollment }}/" class="btn btn-sm btn-lj">Print</a>
+</td>
+<td>
+<a href="/mentor-prefilled-sif/{{ s.enrollment }}/" class="btn btn-sm btn-primary">Download Pre-filled SIF</a>
 </td>
 </tr>
 {% endfor %}

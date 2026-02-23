@@ -11,8 +11,12 @@ def module_context(request):
         }
 
     current = get_current_module(request)
+    modules = list(AcademicModule.objects.filter(is_active=True).order_by("-id"))
+    current_id = current.id if current else None
+    for m in modules:
+        m.is_current = (m.id == current_id)
     return {
-        "module_list": AcademicModule.objects.filter(is_active=True).order_by("-id"),
+        "module_list": modules,
         "current_module": current,
         "can_manage_modules": bool(request.user.is_authenticated and not request.session.get("mentor")),
     }

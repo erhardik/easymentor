@@ -12,104 +12,226 @@
     <link href="{% static 'css/theme.css' %}" rel="stylesheet">
 
     <style>
-    body{ background:#f5f7fb; }
-    .table-responsive{ overflow-x:auto; }
-    @media (max-width:768px){
-        .lj-sidebar{ display:none; }
-        .mobile-menu{ display:block; }
-        table{ font-size:13px; }
-        .btn{ padding:8px 10px; font-size:14px; }
-        h3,h4{ font-size:18px; }
-        .lj-card{ padding:12px !important; }
-    }
-    @media (min-width:769px){ .mobile-menu{ display:none; } }
-    .mobile-view{ display:none; }
-    @media (max-width:768px){
-        .desktop-view{ display:none; }
-        .mobile-view{ display:block; }
-    }
+        body {
+            background: #f5f7fb;
+        }
+
+        .table-responsive {
+            overflow-x: auto;
+        }
+
+        .lj-sidebar {
+            display: flex;
+            flex-direction: column;
+            min-height: calc(100vh - 96px);
+        }
+
+        .menu-bottom {
+            margin-top: auto;
+            padding-top: 12px;
+            border-top: 1px solid #d9e0ea;
+        }
+
+        @media (max-width:768px) {
+            .lj-sidebar {
+                display: none;
+            }
+
+            .mobile-menu {
+                display: block;
+            }
+
+            table {
+                font-size: 13px;
+            }
+
+            .btn {
+                padding: 8px 10px;
+                font-size: 14px;
+            }
+
+            h3,
+            h4 {
+                font-size: 18px;
+            }
+
+            .lj-card {
+                padding: 12px !important;
+            }
+        }
+
+        @media (min-width:769px) {
+            .mobile-menu {
+                display: none;
+            }
+        }
+
+        .mobile-view {
+            display: none;
+        }
+
+        .footer-wrap {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 2.5rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-note {
+            margin: 0;
+            color: #334155;
+            font-weight: 500;
+        }
+
+        .footer-name {
+            color: #111111;
+            font-weight: 700;
+        }
+
+        .footer-name-ai {
+            color: #dc2626;
+            font-weight: 800;
+        }
+
+        .chai-btn {
+            display: inline-block;
+            background: #ff813f;
+            color: #fff;
+            padding: 10px 18px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .suggest-btn {
+            display: inline-block;
+            background: #16a34a;
+            color: #fff;
+            padding: 10px 18px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        @media (max-width:768px) {
+            .desktop-view {
+                display: none;
+            }
+
+            .mobile-view {
+                display: block;
+            }
+
+            .footer-wrap {
+                flex-direction: column;
+                align-items: center;
+                gap: 0.75rem;
+            }
+        }
     </style>
 </head>
 
 <body>
 
-<nav class="lj-navbar d-flex align-items-center">
-    <img src="{% static 'logo.png' %}" class="lj-logo">
-    <div class="ms-2">
-        <strong>L.J. Institute of Engineering & Technology</strong><br>
-        <small>Attendance Follow-up ERP</small>
+    <nav class="lj-navbar d-flex align-items-center">
+        <img src="{% static 'logo.png' %}" class="lj-logo">
+        <div class="ms-2">
+            <strong>L.J. Institute of Engineering & Technology</strong><br>
+            <small>Attendance Follow-up ERP</small>
+        </div>
+
+        <div class="ms-auto d-flex gap-2 align-items-center">
+            {% if current_module and module_list %}
+            <form method="post" action="/switch-module/" class="d-flex align-items-center gap-2 mb-0">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <select name="module_id" class="form-select form-select-sm" style="min-width:260px"
+                    onchange="this.form.submit()">
+                    {% for m in module_list %}
+                    <option value="{{m.id}}" {% if m.is_current %}selected{% endif %}>
+                        {{m.name}}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% if can_manage_modules %}
+            <a href="/modules/" class="btn btn-light btn-sm">Add New Module</a>
+            {% endif %}
+            {% endif %}
+
+            <button class="btn btn-light btn-sm mobile-menu" onclick="toggleMenu()">?</button>
+            <a href="/" class="btn btn-light btn-sm">Logout</a>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+
+            <div class="col-md-2 lj-sidebar p-3" id="sidebar">
+                <h6 class="text-muted">MENU</h6>
+
+                {% if request.session.mentor %}
+                <a href="/mentor-dashboard/" class="d-block mb-2">Attendance Calls</a>
+                <a href="/mentor-result-calls/" class="d-block mb-2">Result Calls</a>
+                <a href="/mentor-other-calls/" class="d-block mb-2">Direct Calls</a>
+                <a href="/mentor-print-sif/" class="d-block mb-2">PRINT SIF</a>
+                <a href="/mentor-report/" class="d-block mb-2">Attendance Report</a>
+                <a href="/mentor-result-report/" class="d-block mb-2">Result Report</a>
+                {% else %}
+                <a href="/view-attendance/" class="d-block mb-2">View Attendance</a>
+                <a href="/upload-attendance/" class="d-block mb-2">Upload Attendance</a>
+                <a href="/delete-week/" class="d-block mb-2">Delete Week</a>
+                <a href="/reports/" class="d-block mb-2">Attendance Reports</a>
+                <a href="/view-results/" class="d-block mb-2">View Result</a>
+                <a href="/upload-results/" class="d-block mb-2">Upload Results</a>
+                <a href="/subjects/" class="d-block mb-2">Manage Subjects</a>
+                <a href="/result-reports/" class="d-block mb-2">Result Reports</a>
+                <a href="/delete-results/" class="d-block mb-2">Delete Results</a>
+                <a href="/upload-students/" class="d-block mb-2">Student Master</a>
+                <a href="/control-panel/" class="d-block mb-2">Control Panel</a>
+                {% endif %}
+                <div class="menu-bottom">
+                    <a href="upi://pay?pa=8866749627@upi&pn=Hardik%20Shah&am=15&cu=INR&tn=Cutting%20Chai"
+                        class="chai-btn w-100 text-center">
+                        &#9749; Buy Me a Cutting Chai (&#8377;15)
+                    </a>
+                    <a href="https://wa.me/918866749627?text=HDS%2C%20aavu%20thai%20shake%3F"
+                        class="suggest-btn w-100 text-center mt-2" target="_blank" rel="noopener noreferrer">
+                        Suggest Improvements
+                    </a>
+                </div>
+            </div>
+
+            <div class="col-md-10 col-12 p-2 p-md-4">
+                <div class="lj-card">
+                    {% block content %}{% endblock %}
+                </div>
+            </div>
+
+        </div>
     </div>
 
-    <div class="ms-auto d-flex gap-2 align-items-center">
-        {% if current_module and module_list %}
-        <form method="post" action="/switch-module/" class="d-flex align-items-center gap-2 mb-0">
-            {% csrf_token %}
-            <input type="hidden" name="next" value="{{ request.get_full_path }}">
-            <select name="module_id" class="form-select form-select-sm" style="min-width:260px" onchange="this.form.submit()">
-                {% for m in module_list %}
-                <option value="{{m.id}}" {% if current_module and m.id == current_module.id %}selected{% endif %}>{{m.name}}</option>
-                {% endfor %}
-            </select>
-        </form>
-        {% if can_manage_modules %}
-        <a href="/modules/" class="btn btn-light btn-sm">Add New Module</a>
-        {% endif %}
-        {% endif %}
-
-        <button class="btn btn-light btn-sm mobile-menu" onclick="toggleMenu()">?</button>
-        <a href="/" class="btn btn-light btn-sm">Logout</a>
+    <div class="lj-footer mt-4 text-center">
+        <div class="footer-wrap">
+            <p class="footer-note">
+                Crafted with &#9749; and code by
+                <span class="footer-name">H<span class="footer-name-ai">A</span>rd<span class="footer-name-ai">I</span>k
+                    Shah</span>
+            </p>
+        </div>
     </div>
-</nav>
 
-<div class="container-fluid">
-<div class="row">
+    <script>
+        function toggleMenu() {
+            let s = document.getElementById("sidebar");
+            if (s.style.display === "flex") s.style.display = "none";
+            else s.style.display = "flex";
+        }
+    </script>
 
-<div class="col-md-2 lj-sidebar p-3" id="sidebar">
-    <h6 class="text-muted">MENU</h6>
-
-    {% if request.session.mentor %}
-        <a href="/mentor-dashboard/" class="d-block mb-2">Attendance Calls</a>
-        <a href="/mentor-result-calls/" class="d-block mb-2">Result Calls</a>
-        <a href="/mentor-other-calls/" class="d-block mb-2">Other Calls</a>
-        <a href="/mentor-print-sif/" class="d-block mb-2">PRINT SIF</a>
-        <a href="/mentor-report/" class="d-block mb-2">Attendance Report</a>
-        <a href="/mentor-result-report/" class="d-block mb-2">Result Report</a>
-    {% else %}
-        <a href="/view-attendance/" class="d-block mb-2">View Attendance</a>
-        <a href="/upload-attendance/" class="d-block mb-2">Upload Attendance</a>
-        <a href="/delete-week/" class="d-block mb-2">Delete Week</a>
-        <a href="/reports/" class="d-block mb-2">Attendance Reports</a>
-        <a href="/view-results/" class="d-block mb-2">View Result</a>
-        <a href="/upload-results/" class="d-block mb-2">Upload Results</a>
-        <a href="/subjects/" class="d-block mb-2">Manage Subjects</a>
-        <a href="/result-reports/" class="d-block mb-2">Result Reports</a>
-        <a href="/delete-results/" class="d-block mb-2">Delete Results</a>
-        <a href="/upload-students/" class="d-block mb-2">Student Master</a>
-        <a href="/control-panel/" class="d-block mb-2">Control Panel</a>
-    {% endif %}
-</div>
-
-<div class="col-md-10 col-12 p-2 p-md-4">
-    <div class="lj-card">
-        {% block content %}{% endblock %}
-    </div>
-</div>
-
-</div>
-</div>
-
-<div class="lj-footer text-center mt-4">
-    Made with AI by Hardik Shah
-</div>
-
-<script>
-function toggleMenu(){
-    let s=document.getElementById("sidebar");
-    if(s.style.display==="block") s.style.display="none";
-    else s.style.display="block";
-}
-</script>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
+
 </html>
