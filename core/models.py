@@ -319,3 +319,38 @@ class OtherCallRecord(models.Model):
 
     def __str__(self):
         return f"Other Call - {self.student.enrollment}"
+
+
+class ResultUploadJob(models.Model):
+    STATUS_QUEUED = "queued"
+    STATUS_RUNNING = "running"
+    STATUS_COMPLETED = "completed"
+    STATUS_FAILED = "failed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = [
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_RUNNING, "Running"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    ]
+
+    job_id = models.CharField(max_length=64, unique=True, db_index=True)
+    module = models.ForeignKey(AcademicModule, on_delete=models.CASCADE, related_name="result_upload_jobs")
+    created_by = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_QUEUED)
+    message = models.TextField(blank=True)
+    progress_current = models.IntegerField(default=0)
+    progress_total = models.IntegerField(default=0)
+    current_enrollment = models.CharField(max_length=32, blank=True)
+    current_student_name = models.CharField(max_length=150, blank=True)
+    cancel_requested = models.BooleanField(default=False)
+    result_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"ResultUploadJob {self.job_id} ({self.status})"

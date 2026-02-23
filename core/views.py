@@ -1,13 +1,19 @@
 # ---------- DJANGO ----------
 import io
+import os
 import re
+import tempfile
+import threading
+import uuid
 import zipfile
 
+from django.conf import settings
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth import authenticate, login
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
+from django.db import close_old_connections
 from django.db.models import Count
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -27,6 +33,7 @@ from .models import (
     OtherCallRecord,
     ResultCallRecord,
     ResultUpload,
+    ResultUploadJob,
     Student,
     StudentResult,
     Subject,
@@ -282,6 +289,189 @@ def upload_attendance(request):
         })
 
 
+def _process_result_upload(module, username, test_name, subject_id, upload_mode, bulk_confirm, file_obj, progress_cb=None, cancel_cb=None):
+    is_all_tests = test_name == "ALL_EXAMS"
+    is_all_subjects = str(subject_id).upper() == "ALL"
+
+    if is_all_tests and is_all_subjects:
+        summary = import_compiled_bulk_all(
+            file_obj,
+            username,
+            module=module,
+            progress_cb=progress_cb,
+            cancel_cb=cancel_cb,
+        )
+        return {
+            "ok": True,
+            "msg": (
+                f"Bulk replace completed. Created uploads: {summary['uploads_created']}. "
+                f"Rows matched: {summary['rows_matched']}. Failed calls: {summary['rows_failed']}."
+            ),
+            "test_name": "ALL_EXAMS",
+            "subject_name": "ALL",
+            "upload_id": "",
+            "mentor_stats": [],
+            "total_calls": summary["rows_failed"],
+            "upload_mode": upload_mode,
+            "found_subjects": summary.get("found_subjects", []),
+            "used_subject": "ALL",
+        }
+
+    subject = Subject.objects.filter(id=subject_id, module=module, is_active=True).first()
+    if not subject:
+        raise Exception("Invalid subject")
+    if subject.result_format == Subject.FORMAT_T4_ONLY and test_name != "T4":
+        raise Exception("This subject is configured as Only T4. Please upload in T4.")
+
+    upload, _ = ResultUpload.objects.update_or_create(
+        module=module,
+        test_name=test_name,
+        subject=subject,
+        defaults={"uploaded_by": username},
+    )
+
+    if upload_mode == "compiled":
+        summary = import_compiled_result_sheet(file_obj, upload, progress_cb=progress_cb, cancel_cb=cancel_cb)
+    else:
+        summary = import_result_sheet(file_obj, upload, progress_cb=progress_cb, cancel_cb=cancel_cb)
+
+    mentor_stats = list(
+        ResultCallRecord.objects.filter(upload=upload)
+        .values("student__mentor__name")
+        .annotate(total=Count("id"))
+        .order_by("student__mentor__name")
+    )
+    total_calls = sum(m["total"] for m in mentor_stats)
+    return {
+        "ok": True,
+        "msg": (
+            f"Processed {summary['rows_total']} rows. "
+            f"Matched: {summary['rows_matched']}. "
+            f"Fail calls generated: {summary['rows_failed']}."
+        ),
+        "test_name": test_name,
+        "subject_name": subject.name,
+        "upload_id": upload.id,
+        "mentor_stats": mentor_stats,
+        "total_calls": total_calls,
+        "upload_mode": upload_mode,
+        "found_subjects": summary.get("found_subjects", []),
+        "used_subject": summary.get("used_subject", ""),
+    }
+
+
+def _run_result_upload_job(job_id, module_id, username, test_name, subject_id, upload_mode, bulk_confirm, temp_path):
+    close_old_connections()
+    try:
+        job = ResultUploadJob.objects.filter(job_id=job_id).first()
+        if not job:
+            return
+        job.status = ResultUploadJob.STATUS_RUNNING
+        job.message = "Reading marks and preparing result call list..."
+        job.save(update_fields=["status", "message", "updated_at"])
+
+        def cancel_cb():
+            return ResultUploadJob.objects.filter(job_id=job_id, cancel_requested=True).exists()
+
+        def progress_cb(current, total, enrollment, student_name, message):
+            ResultUploadJob.objects.filter(job_id=job_id).update(
+                progress_current=current or 0,
+                progress_total=total or 0,
+                current_enrollment=(enrollment or ""),
+                current_student_name=(student_name or ""),
+                message=(message or "Processing result upload..."),
+                updated_at=timezone.now(),
+            )
+
+        module = AcademicModule.objects.filter(id=module_id).first()
+        if not module:
+            raise Exception("Module not found")
+
+        with open(temp_path, "rb") as f:
+            payload = _process_result_upload(
+                module=module,
+                username=username,
+                test_name=test_name,
+                subject_id=subject_id,
+                upload_mode=upload_mode,
+                bulk_confirm=bulk_confirm,
+                file_obj=f,
+                progress_cb=progress_cb,
+                cancel_cb=cancel_cb,
+            )
+
+        if cancel_cb():
+            ResultUploadJob.objects.filter(job_id=job_id).update(
+                status=ResultUploadJob.STATUS_CANCELLED,
+                message="Upload cancelled.",
+                updated_at=timezone.now(),
+            )
+            return
+
+        ResultUploadJob.objects.filter(job_id=job_id).update(
+            status=ResultUploadJob.STATUS_COMPLETED,
+            message="Upload completed.",
+            result_payload=payload,
+            progress_current=1,
+            progress_total=1,
+            updated_at=timezone.now(),
+        )
+    except Exception as exc:
+        cancelled = ResultUploadJob.objects.filter(job_id=job_id, cancel_requested=True).exists()
+        ResultUploadJob.objects.filter(job_id=job_id).update(
+            status=(ResultUploadJob.STATUS_CANCELLED if cancelled else ResultUploadJob.STATUS_FAILED),
+            message=("Upload cancelled." if cancelled else str(exc)),
+            updated_at=timezone.now(),
+        )
+    finally:
+        try:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception:
+            pass
+        close_old_connections()
+
+
+@login_required
+@require_http_methods(["GET"])
+def upload_results_progress(request, job_id):
+    if "mentor" in request.session:
+        return JsonResponse({"ok": False, "msg": "Unauthorized"}, status=403)
+    module = _active_module(request)
+    job = ResultUploadJob.objects.filter(job_id=job_id, module=module).first()
+    if not job:
+        return JsonResponse({"ok": False, "msg": "Job not found"}, status=404)
+    return JsonResponse(
+        {
+            "ok": True,
+            "job_id": job.job_id,
+            "status": job.status,
+            "message": job.message or "",
+            "progress_current": job.progress_current,
+            "progress_total": job.progress_total,
+            "current_enrollment": job.current_enrollment or "",
+            "current_student_name": job.current_student_name or "",
+            "result": job.result_payload or {},
+        }
+    )
+
+
+@login_required
+@require_http_methods(["POST"])
+def upload_results_cancel(request, job_id):
+    if "mentor" in request.session:
+        return JsonResponse({"ok": False, "msg": "Unauthorized"}, status=403)
+    module = _active_module(request)
+    updated = ResultUploadJob.objects.filter(
+        job_id=job_id,
+        module=module,
+        status__in=[ResultUploadJob.STATUS_QUEUED, ResultUploadJob.STATUS_RUNNING],
+    ).update(cancel_requested=True, message="Cancelling upload...", updated_at=timezone.now())
+    if not updated:
+        return JsonResponse({"ok": False, "msg": "Upload is already finished."})
+    return JsonResponse({"ok": True, "msg": "Cancel requested."})
+
+
 @login_required
 @require_http_methods(["GET", "POST"])
 def upload_results(request):
@@ -320,77 +510,42 @@ def upload_results(request):
         is_all_subjects = str(subject_id).upper() == "ALL"
         if is_all_tests != is_all_subjects:
             return JsonResponse({"ok": False, "msg": "Please select BOTH ALL EXAMS and ALL subjects for bulk upload."})
+        if is_all_tests and is_all_subjects and upload_mode != "compiled":
+            return JsonResponse({"ok": False, "msg": "ALL_EXAMS + ALL subjects is supported only for Compiled sheet mode."})
+        if is_all_tests and is_all_subjects and bulk_confirm != "yes":
+            return JsonResponse({"ok": False, "msg": "Bulk upload cancelled. Please select YES to replace old uploads."})
 
-        # Bulk replace flow: ALL_EXAMS + ALL subjects (compiled only), excluding REM.
-        if is_all_tests and is_all_subjects:
-            if upload_mode != "compiled":
-                return JsonResponse({"ok": False, "msg": "ALL_EXAMS + ALL subjects is supported only for Compiled sheet mode."})
-            if bulk_confirm != "yes":
-                return JsonResponse({"ok": False, "msg": "Bulk upload cancelled. Please select YES to replace old uploads."})
+        suffix = os.path.splitext(getattr(file_obj, "name", ""))[1] or ".xlsx"
+        fd, temp_path = tempfile.mkstemp(prefix="result_upload_", suffix=suffix, dir=tempfile.gettempdir())
+        with os.fdopen(fd, "wb") as tmp:
+            for chunk in file_obj.chunks():
+                tmp.write(chunk)
 
-            summary = import_compiled_bulk_all(file_obj, request.user.username, module=module)
-            return JsonResponse(
-                {
-                    "ok": True,
-                    "msg": (
-                        f"Bulk replace completed. Created uploads: {summary['uploads_created']}. "
-                        f"Rows matched: {summary['rows_matched']}. Failed calls: {summary['rows_failed']}."
-                    ),
-                    "test_name": "ALL_EXAMS",
-                    "subject_name": "ALL",
-                    "upload_id": "",
-                    "mentor_stats": [],
-                    "total_calls": summary["rows_failed"],
-                    "upload_mode": upload_mode,
-                    "found_subjects": summary.get("found_subjects", []),
-                    "used_subject": "ALL",
-                }
-            )
-
-        subject = Subject.objects.filter(id=subject_id, module=module, is_active=True).first()
-        if not subject:
-            return JsonResponse({"ok": False, "msg": "Invalid subject"})
-        if subject.result_format == Subject.FORMAT_T4_ONLY and test_name != "T4":
-            return JsonResponse({"ok": False, "msg": "This subject is configured as Only T4. Please upload in T4."})
-
-        upload, _ = ResultUpload.objects.update_or_create(
+        job_key = str(uuid.uuid4())
+        job = ResultUploadJob.objects.create(
+            job_id=job_key,
             module=module,
-            test_name=test_name,
-            subject=subject,
-            defaults={"uploaded_by": request.user.username},
+            created_by=request.user.username,
+            status=ResultUploadJob.STATUS_QUEUED,
+            message="Upload queued...",
         )
 
-        if upload_mode == "compiled":
-            summary = import_compiled_result_sheet(file_obj, upload)
-        else:
-            summary = import_result_sheet(file_obj, upload)
-
-        mentor_stats = list(
-            ResultCallRecord.objects.filter(upload=upload)
-            .values("student__mentor__name")
-            .annotate(total=Count("id"))
-            .order_by("student__mentor__name")
-        )
-        total_calls = sum(m["total"] for m in mentor_stats)
-
-        return JsonResponse(
-            {
-                "ok": True,
-                "msg": (
-                    f"Processed {summary['rows_total']} rows. "
-                    f"Matched: {summary['rows_matched']}. "
-                    f"Fail calls generated: {summary['rows_failed']}."
-                ),
+        t = threading.Thread(
+            target=_run_result_upload_job,
+            kwargs={
+                "job_id": job.job_id,
+                "module_id": module.id,
+                "username": request.user.username,
                 "test_name": test_name,
-                "subject_name": subject.name,
-                "upload_id": upload.id,
-                "mentor_stats": mentor_stats,
-                "total_calls": total_calls,
+                "subject_id": str(subject_id),
                 "upload_mode": upload_mode,
-                "found_subjects": summary.get("found_subjects", []),
-                "used_subject": summary.get("used_subject", ""),
-            }
+                "bulk_confirm": bulk_confirm,
+                "temp_path": temp_path,
+            },
+            daemon=True,
         )
+        t.start()
+        return JsonResponse({"ok": True, "job_id": job.job_id})
     except Exception as e:
         return JsonResponse({"ok": False, "msg": str(e)})
 

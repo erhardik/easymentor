@@ -181,7 +181,7 @@ def _fail_rule(test_name, marks_current, marks_total):
     return False, ""
 
 
-def _save_import_rows(upload, rows):
+def _save_import_rows(upload, rows, progress_cb=None, cancel_cb=None):
     StudentResult.objects.filter(upload=upload).delete()
     ResultCallRecord.objects.filter(upload=upload).delete()
 
@@ -189,13 +189,24 @@ def _save_import_rows(upload, rows):
     rows_matched = 0
     rows_failed = 0
 
-    for row in rows:
+    total_rows = len(rows)
+    for idx, row in enumerate(rows, start=1):
+        if cancel_cb and cancel_cb():
+            raise Exception("Upload cancelled by user.")
         enrollment = _clean_enrollment(row.get("enrollment"))
         if not enrollment:
             continue
         rows_total += 1
 
         student = Student.objects.filter(module=upload.module, enrollment=enrollment).select_related("mentor").first()
+        if progress_cb:
+            progress_cb(
+                current=idx,
+                total=total_rows,
+                enrollment=enrollment,
+                student_name=(student.name if student else ""),
+                message="Reading marks and preparing result call list...",
+            )
         if not student:
             continue
         rows_matched += 1
@@ -377,7 +388,7 @@ def _build_rows_from_compiled_block(data_df, enrollment_idx, cols, test_name):
 
 
 @transaction.atomic
-def import_result_sheet(file_obj, upload: ResultUpload):
+def import_result_sheet(file_obj, upload: ResultUpload, progress_cb=None, cancel_cb=None):
     if upload.test_name not in TESTS:
         raise Exception("Invalid test")
 
@@ -439,7 +450,7 @@ def import_result_sheet(file_obj, upload: ResultUpload):
             }
         )
 
-    return _save_import_rows(upload, parsed_rows)
+    return _save_import_rows(upload, parsed_rows, progress_cb=progress_cb, cancel_cb=cancel_cb)
 
 
 def _exam_key_from_header(text):
@@ -471,7 +482,7 @@ def _exam_key_from_header(text):
 
 
 @transaction.atomic
-def import_compiled_result_sheet(file_obj, upload: ResultUpload):
+def import_compiled_result_sheet(file_obj, upload: ResultUpload, progress_cb=None, cancel_cb=None):
     layout = _read_compiled_layout(file_obj)
     found_subjects = layout["found_subjects"]
     selected_block_name = _match_compiled_subject(upload.subject.name, found_subjects)
@@ -507,14 +518,14 @@ def import_compiled_result_sheet(file_obj, upload: ResultUpload):
         upload.test_name,
     )
 
-    summary = _save_import_rows(upload, parsed_rows)
+    summary = _save_import_rows(upload, parsed_rows, progress_cb=progress_cb, cancel_cb=cancel_cb)
     summary["found_subjects"] = found_subjects
     summary["used_subject"] = selected_block_name
     return summary
 
 
 @transaction.atomic
-def import_compiled_bulk_all(file_obj, uploaded_by="", module=None):
+def import_compiled_bulk_all(file_obj, uploaded_by="", module=None, progress_cb=None, cancel_cb=None):
     if module is None:
         raise Exception("Module is required for bulk import")
     layout = _read_compiled_layout(file_obj)
@@ -543,6 +554,8 @@ def import_compiled_bulk_all(file_obj, uploaded_by="", module=None):
         cols = layout["blocks"][block]
         tests = ["T4"] if s.result_format == Subject.FORMAT_T4_ONLY else ["T1", "T2", "T3", "T4"]
         for test_name in tests:
+            if cancel_cb and cancel_cb():
+                raise Exception("Upload cancelled by user.")
             upload = ResultUpload.objects.create(
                 module=module,
                 test_name=test_name,
@@ -555,7 +568,7 @@ def import_compiled_bulk_all(file_obj, uploaded_by="", module=None):
                 cols,
                 test_name,
             )
-            summary = _save_import_rows(upload, parsed_rows)
+            summary = _save_import_rows(upload, parsed_rows, progress_cb=progress_cb, cancel_cb=cancel_cb)
             uploads_created += 1
             rows_total += summary["rows_total"]
             rows_matched += summary["rows_matched"]
