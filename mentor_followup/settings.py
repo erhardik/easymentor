@@ -3,12 +3,16 @@ from pathlib import Path
 
 try:
     import dj_database_url
-except ImportError:  # optional in local dev until requirements are installed
+except ImportError:
     dj_database_url = None
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+# ----------------------------
+# Helper functions
+# ----------------------------
 
 def env_bool(name, default=False):
     value = os.getenv(name, str(default)).strip().lower()
@@ -20,31 +24,41 @@ def env_list(name, default=""):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+# ----------------------------
+# Core Settings
+# ----------------------------
+
 SECRET_KEY = os.getenv(
     "SECRET_KEY",
-    "django-insecure-cxh8f&a5mqwy)ov714y2)-k69-cph#lmanxpw8%e-*plu71r3_",
+    "django-insecure-change-this-in-production"
 )
-DEBUG = env_bool("DEBUG", True)
 
-ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "127.0.0.1,localhost","web-production-a7fdd.up.railway.app")
-if DEBUG and not ALLOWED_HOSTS:
-    ALLOWED_HOSTS = ["*"]
+DEBUG = env_bool("DEBUG", False)
 
 
-CSRF_TRUSTED_ORIGINS = [
-    "https://*.ngrok-free.dev",
-    "https://*.ngrok.io",
-]
-CSRF_TRUSTED_ORIGINS += env_list("CSRF_TRUSTED_ORIGINS", "")
+ALLOWED_HOSTS = env_list(
+    "ALLOWED_HOSTS",
+    "127.0.0.1,localhost,web-production-a7fdd.up.railway.app"
+)
 
-CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", not DEBUG)
-SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", not DEBUG)
+
+CSRF_TRUSTED_ORIGINS = env_list(
+    "CSRF_TRUSTED_ORIGINS",
+    "https://web-production-a7fdd.up.railway.app"
+)
+
+
+CSRF_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SECURE = not DEBUG
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
-# Application definition
+# ----------------------------
+# Application Definition
+# ----------------------------
 
-INSTALLED_APPS = ['core',
+INSTALLED_APPS = [
+    'core',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -85,56 +99,49 @@ TEMPLATES = [
 WSGI_APPLICATION = 'mentor_followup.wsgi.application'
 
 
+# ----------------------------
 # Database
-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
+# ----------------------------
 
-default_db = {
+DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+
 if dj_database_url and os.getenv("DATABASE_URL"):
-    default_db["default"] = dj_database_url.config(
+    DATABASES["default"] = dj_database_url.config(
         conn_max_age=600,
-        ssl_require=env_bool("DB_SSL_REQUIRE", True),
+        ssl_require=True,
     )
-DATABASES = default_db
 
 
-# Password validation
-# https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
+# ----------------------------
+# Password Validation
+# ----------------------------
 
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
 
+# ----------------------------
 # Internationalization
-# https://docs.djangoproject.com/en/6.0/topics/i18n/
+# ----------------------------
 
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'Asia/Kolkata'
-
 USE_I18N = True
-
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.0/howto/static-files/
+# ----------------------------
+# Static Files
+# ----------------------------
 
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
@@ -144,4 +151,3 @@ STATICFILES_DIRS = [
 ]
 
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
-
