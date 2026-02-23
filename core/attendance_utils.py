@@ -114,7 +114,7 @@ def read_sheet(file):
 
 # ---------------- IMPORT LOGIC ----------------
 
-def import_attendance(weekly_file, overall_file, week_no, rule="both"):
+def import_attendance(weekly_file, overall_file, week_no, module, rule="both"):
 
     weekly = read_sheet(weekly_file)
 
@@ -129,7 +129,7 @@ def import_attendance(weekly_file, overall_file, week_no, rule="both"):
     for enrollment, week_per in weekly.items():
 
         try:
-            student = Student.objects.get(enrollment=enrollment)
+            student = Student.objects.get(module=module, enrollment=enrollment)
         except Student.DoesNotExist:
             continue
 

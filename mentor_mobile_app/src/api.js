@@ -1,13 +1,16 @@
 import { DEFAULT_API_BASE_URL } from "./constants";
 
-let apiBaseUrl = DEFAULT_API_BASE_URL;
+let CURRENT_API_BASE_URL = DEFAULT_API_BASE_URL;
 
 export function setApiBaseUrl(url) {
-  apiBaseUrl = (url || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+  const next = String(url || "").trim().replace(/\/+$/, "");
+  if (next) {
+    CURRENT_API_BASE_URL = next;
+  }
 }
 
 export function getApiBaseUrl() {
-  return apiBaseUrl;
+  return CURRENT_API_BASE_URL;
 }
 
 async function request(path, options = {}, token = "") {
@@ -18,7 +21,7 @@ async function request(path, options = {}, token = "") {
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetch(`${CURRENT_API_BASE_URL}${path}`, {
     ...options,
     headers,
   });
@@ -40,12 +43,17 @@ export function logout(token) {
   return request("/api/mobile/logout/", { method: "POST", body: "{}" }, token);
 }
 
-export function getWeeks(token) {
-  return request("/api/mobile/weeks/", { method: "GET" }, token);
+export function getModules(token, moduleId = "") {
+  const query = moduleId ? `?module_id=${moduleId}` : "";
+  return request(`/api/mobile/modules/${query}`, { method: "GET" }, token);
 }
 
-export function getCalls(token, week) {
-  return request(`/api/mobile/calls/?week=${week}`, { method: "GET" }, token);
+export function getWeeks(token, moduleId) {
+  return request(`/api/mobile/weeks/?module_id=${moduleId}`, { method: "GET" }, token);
+}
+
+export function getCalls(token, week, moduleId) {
+  return request(`/api/mobile/calls/?week=${week}&module_id=${moduleId}`, { method: "GET" }, token);
 }
 
 export function saveCall(token, payload) {
@@ -56,14 +64,60 @@ export function saveCall(token, payload) {
   );
 }
 
-export function getRetryList(token, week) {
-  return request(`/api/mobile/retry-list/?week=${week}`, { method: "GET" }, token);
+export function getRetryList(token, week, moduleId) {
+  return request(`/api/mobile/retry-list/?week=${week}&module_id=${moduleId}`, { method: "GET" }, token);
 }
 
-export function markMessage(token, id) {
+export function markMessage(token, id, moduleId) {
   return request(
     "/api/mobile/mark-message/",
-    { method: "POST", body: JSON.stringify({ id }) },
+    { method: "POST", body: JSON.stringify({ id, module_id: moduleId }) },
+    token
+  );
+}
+
+export function getResultCycles(token, moduleId) {
+  return request(`/api/mobile/result-cycles/?module_id=${moduleId}`, { method: "GET" }, token);
+}
+
+export function getResultCalls(token, uploadId = "", moduleId = "") {
+  const query = uploadId ? `?upload_id=${uploadId}&module_id=${moduleId}` : `?module_id=${moduleId}`;
+  return request(`/api/mobile/result-calls/${query}`, { method: "GET" }, token);
+}
+
+export function saveResultCall(token, payload) {
+  return request(
+    "/api/mobile/save-result-call/",
+    { method: "POST", body: JSON.stringify(payload) },
+    token
+  );
+}
+
+export function getResultRetryList(token, uploadId, moduleId) {
+  return request(`/api/mobile/result-retry-list/?upload_id=${uploadId}&module_id=${moduleId}`, { method: "GET" }, token);
+}
+
+export function markResultMessage(token, id, moduleId) {
+  return request(
+    "/api/mobile/mark-result-message/",
+    { method: "POST", body: JSON.stringify({ id, module_id: moduleId }) },
+    token
+  );
+}
+
+export function getResultReport(token, uploadId = "", moduleId = "") {
+  const query = uploadId ? `?upload_id=${uploadId}&module_id=${moduleId}` : `?module_id=${moduleId}`;
+  return request(`/api/mobile/result-report/${query}`, { method: "GET" }, token);
+}
+
+export function getOtherCalls(token, moduleId) {
+  return request(`/api/mobile/other-calls/?module_id=${moduleId}`, { method: "GET" }, token);
+}
+
+export function saveOtherCall(token, payload) {
+  return request(
+    "/api/mobile/save-other-call/",
+    { method: "POST", body: JSON.stringify(payload) },
     token
   );
 }

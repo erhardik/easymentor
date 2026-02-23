@@ -17,6 +17,36 @@
 
 </div>
 
+{% if skipped_rows %}
+<div class="card p-3 mb-4">
+    <h5 class="mb-2">Skipped Rows (first {{ skipped_rows|length }})</h5>
+    <div class="table-responsive">
+        <table class="table table-bordered table-sm">
+            <thead>
+                <tr>
+                    <th>Row</th>
+                    <th>Roll</th>
+                    <th>Name</th>
+                    <th>Enrollment</th>
+                    <th>Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in skipped_rows %}
+                <tr>
+                    <td>{{ r.row }}</td>
+                    <td>{{ r.roll }}</td>
+                    <td>{{ r.name }}</td>
+                    <td>{{ r.enrollment }}</td>
+                    <td>{{ r.reason }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 <table class="table table-bordered table-sm">
 <thead>
 <tr>
@@ -24,8 +54,8 @@
 <th>Enrollment</th>
 <th>Name</th>
 <th>Mentor</th>
+<th>Student Mobile</th>
 <th>Father Mobile</th>
-<th>Mother Mobile</th>
 </tr>
 </thead>
 
@@ -36,8 +66,8 @@
 <td>{{s.enrollment}}</td>
 <td>{{s.name}}</td>
 <td>{{s.mentor.name}}</td>
+<td>{{s.student_mobile}}</td>
 <td>{{s.father_mobile}}</td>
-<td>{{s.mother_mobile}}</td>
 </tr>
 {% endfor %}
 </tbody>

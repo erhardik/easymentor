@@ -11,8 +11,8 @@
 <th>Roll</th>
 <th>Name</th>
 <th>Mentor</th>
-<th>Father</th>
-<th>Mother</th>
+<th>Student Contact</th>
+<th>Father Contact</th>
 <th>Print</th>
 </tr>
 </thead>
@@ -24,17 +24,16 @@
 <td>{{s.name}}</td>
 <td>{{s.mentor.name}}</td>
 <td>
-<input class="form-control form-control-sm edit"
+<input class="form-control form-control-sm edit {% if s.student_mobile_updated_by_mentor %}bg-warning-subtle{% endif %}"
+data-enroll="{{s.enrollment}}"
+data-field="student"
+value="{{s.student_mobile}}">
+</td>
+<td>
+<input class="form-control form-control-sm edit {% if s.father_mobile_updated_by_mentor %}bg-warning-subtle{% endif %}"
 data-enroll="{{s.enrollment}}"
 data-field="father"
 value="{{s.father_mobile}}">
-</td>
-
-<td>
-<input class="form-control form-control-sm edit"
-data-enroll="{{s.enrollment}}"
-data-field="mother"
-value="{{s.mother_mobile}}">
 </td>
 
 <td>
@@ -76,7 +75,12 @@ value:this.value
 .then(r=>r.json())
 .then(()=>{
 this.style.background="#d4edda";   // green saved effect
-setTimeout(()=>this.style.background="",800);
+setTimeout(()=>{
+this.style.background="";
+if(this.dataset.field==="student" || this.dataset.field==="father"){
+this.classList.remove("bg-warning-subtle");
+}
+},800);
 });
 
 });

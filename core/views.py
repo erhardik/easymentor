@@ -10,17 +10,160 @@ from django.contrib import messages
 from django.views.decorators.http import require_http_methods
 from django.http import JsonResponse
 from django.db.models import Max 
+from django.db.models import Q
 # ---------- LOCAL FORMS ----------
 from .forms import UploadFileForm
 
 # ---------- LOCAL MODELS ----------
-from .models import Mentor, Student, Attendance, CallRecord, WeekLock
-from .models import WeekLock, CallRecord
+from .models import (
+    AcademicModule,
+    Attendance,
+    CallRecord,
+    Mentor,
+    OtherCallRecord,
+    ResultCallRecord,
+    ResultUpload,
+    Student,
+    StudentResult,
+    Subject,
+    WeekLock,
+)
 
 # ---------- LOCAL UTILITIES ----------
-from .utils import import_students_from_excel
+from .utils import import_students_from_excel, resolve_mentor_identity
 from .attendance_utils import import_attendance
+from .result_utils import import_compiled_bulk_all, import_compiled_result_sheet, import_result_sheet
 from .pdf_report import generate_student_pdf
+from .module_utils import get_current_module
+
+TEST_NAMES = ["T1", "T2", "T3", "T4", "REMEDIAL"]
+
+
+def _session_mentor_obj(request):
+    mentor_key = request.session.get("mentor")
+    mentor = resolve_mentor_identity(mentor_key)
+    if mentor and mentor_key != mentor.name:
+        request.session["mentor"] = mentor.name
+    return mentor
+
+
+def _active_module(request):
+    return get_current_module(request)
+
+
+def _result_report_text(test_name, subject_name, mentor_name, total, received, not_received, message_done):
+    if test_name == "T1":
+        rule = f"Less than 9 marks in {test_name}"
+    elif test_name == "T2":
+        rule = "Less than 9 marks in T2 & less than 18 in (T1+T2)"
+    elif test_name == "T3":
+        rule = "Less than 9 marks in T3 & less than 27 in (T1+T2+T3)"
+    elif test_name == "T4":
+        rule = "Less than 18 marks in SEE & less than 35 in (T1+T2+T3+SEE)"
+    else:
+        rule = "Less than 35 marks in REMEDIAL"
+
+    return f"""📞Phone call done regarding failed in {subject_name} ({rule})
+Name of Faculty- {mentor_name}
+Total no of calls- {total:02d}
+Received Calls - {received:02d}
+Not received- {not_received:02d}
+No of Message done as call not Received - {message_done:02d}"""
+
+
+def _result_filter_config(test_name):
+    test_name = (test_name or "").upper()
+    if test_name == "T1":
+        return {
+            "current_key": "current_fail",
+            "current_label": "T1<9",
+            "total_key": "total_fail",
+            "total_label": "till T1<9",
+            "either_key": "either_fail",
+            "either_label": "Either (T1<9 OR till T1<9)",
+            "current_threshold": 9,
+            "total_threshold": 9,
+            "exam_col_label": "T1 marks /25",
+            "total_col_label": "Total till T1 /25",
+            "display_columns": [
+                {"key": "marks_current", "label": "T1 marks /25"},
+                {"key": "marks_total", "label": "Total till T1 /25"},
+            ],
+        }
+    if test_name == "T2":
+        return {
+            "current_key": "current_fail",
+            "current_label": "T2<9",
+            "total_key": "total_fail",
+            "total_label": "T1+T2<18",
+            "either_key": "either_fail",
+            "either_label": "Either (T2<9 OR T1+T2<18)",
+            "current_threshold": 9,
+            "total_threshold": 18,
+            "exam_col_label": "T2 marks /25",
+            "total_col_label": "T1+T2 /50",
+            "display_columns": [
+                {"key": "marks_t1", "label": "T1 marks /25"},
+                {"key": "marks_current", "label": "T2 marks /25"},
+                {"key": "marks_total", "label": "T1+T2 /50"},
+            ],
+        }
+    if test_name == "T3":
+        return {
+            "current_key": "current_fail",
+            "current_label": "T3<9",
+            "total_key": "total_fail",
+            "total_label": "T1+T2+T3<27",
+            "either_key": "either_fail",
+            "either_label": "Either (T3<9 OR T1+T2+T3<27)",
+            "current_threshold": 9,
+            "total_threshold": 27,
+            "exam_col_label": "T3 marks /25",
+            "total_col_label": "T1+T2+T3 /75",
+            "display_columns": [
+                {"key": "marks_t1", "label": "T1 marks /25"},
+                {"key": "marks_t2", "label": "T2 marks /25"},
+                {"key": "marks_current", "label": "T3 marks /25"},
+                {"key": "marks_total", "label": "T1+T2+T3 /75"},
+            ],
+        }
+    if test_name == "T4":
+        return {
+            "current_key": "current_fail",
+            "current_label": "T4<18",
+            "total_key": "total_fail",
+            "total_label": "T1+T2+T3+T4<35",
+            "either_key": "either_fail",
+            "either_label": "Either (T4<18 OR T1+T2+T3+T4<35)",
+            "current_threshold": 18,
+            "total_threshold": 35,
+            "exam_col_label": "T4 marks /50",
+            "total_col_label": "T1+T2+T3+(T4/2) /100",
+            "display_columns": [
+                {"key": "marks_t1", "label": "T1 marks /25"},
+                {"key": "marks_t2", "label": "T2 marks /25"},
+                {"key": "marks_t3", "label": "T3 marks /25"},
+                {"key": "marks_current", "label": "T4 marks /50"},
+                {"key": "marks_t4_half", "label": "T4/2 /25"},
+                {"key": "marks_total", "label": "T1+T2+T3+(T4/2) /100"},
+            ],
+        }
+    return {
+        "current_key": "current_fail",
+        "current_label": "REM<35",
+        "total_key": "total_fail",
+        "total_label": "REM<35",
+        "either_key": "either_fail",
+        "either_label": "Either (REM<35)",
+        "current_threshold": 35,
+        "total_threshold": 35,
+        "exam_col_label": "REM marks /100",
+        "total_col_label": "Total till REM /100",
+        "display_columns": [
+            {"key": "marks_current", "label": "REM marks /100"},
+            {"key": "marks_total", "label": "Total till REM /100"},
+        ],
+    }
 
 # ---------------- LOGIN ----------------
 def login_page(request):
@@ -35,12 +178,15 @@ def login_page(request):
         if user is not None:
             login(request, user)
             request.session.pop("mentor", None)
+            _active_module(request)
             return redirect("/reports/")
 
         # mentor login
         if password == "mentor@LJ123":
-            if Mentor.objects.filter(name=username).exists():
-                request.session["mentor"] = username
+            mentor = resolve_mentor_identity(username)
+            if mentor:
+                request.session["mentor"] = mentor.name
+                _active_module(request)
                 return redirect("/mentor-dashboard/")
 
         error = "Invalid username or password"
@@ -51,6 +197,7 @@ def login_page(request):
 # ---------------- STUDENT MASTER ----------------
 @login_required
 def upload_students(request):
+    module = _active_module(request)
 
     message = ""
     skipped_rows = []
@@ -60,14 +207,14 @@ def upload_students(request):
         if form.is_valid():
             file = request.FILES['file']
             try:
-                added, updated, skipped, skipped_rows = import_students_from_excel(file)
+                added, updated, skipped, skipped_rows = import_students_from_excel(file, module)
                 message = f"Added: {added} | Updated: {updated} | Skipped: {skipped}"
             except Exception as e:
                 message = f"Upload failed: {str(e)}"
     else:
         form = UploadFileForm()
 
-    students = Student.objects.select_related("mentor").order_by("roll_no")
+    students = Student.objects.select_related("mentor").filter(module=module).order_by("roll_no")
 
     return render(request, 'upload.html', {
         'form': form,
@@ -79,6 +226,7 @@ def upload_students(request):
 # ---------------- ATTENDANCE VIEW & UPLOAD ----------------
 @require_http_methods(["GET","POST"])
 def upload_attendance(request):
+    module = _active_module(request)
 
     # -------- OPEN PAGE --------
     if request.method == "GET":
@@ -96,18 +244,18 @@ def upload_attendance(request):
             overall_file = None
 
         # lock check
-        if WeekLock.objects.filter(week_no=week_no, locked=True).exists():
+        if WeekLock.objects.filter(module=module, week_no=week_no, locked=True).exists():
             return JsonResponse({
                 "ok": False,
                 "msg": f"Week {week_no} is LOCKED. Upload not allowed."
             })
 
         # import
-        count = import_attendance(weekly_file, overall_file, week_no, rule)
+        count = import_attendance(weekly_file, overall_file, week_no, module, rule)
 
         # mentor-wise counts
         mentor_stats = list(
-            CallRecord.objects.filter(week_no=week_no)
+            CallRecord.objects.filter(week_no=week_no, student__module=module)
             .values("student__mentor__name")
             .annotate(total=Count("id"))
             .order_by("student__mentor__name")
@@ -129,6 +277,384 @@ def upload_attendance(request):
             "msg": str(e)
         })
 
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def upload_results(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+    module = _active_module(request)
+
+    if request.method == "GET":
+        return render(
+            request,
+            "upload_results.html",
+            {
+                "tests": TEST_NAMES,
+                "subjects": Subject.objects.filter(module=module, is_active=True).order_by("name"),
+            },
+        )
+
+    try:
+        test_name = (request.POST.get("test_name") or "").strip().upper()
+        subject_id = request.POST.get("subject_id")
+        upload_mode = (request.POST.get("upload_mode") or "subject").strip().lower()
+        bulk_confirm = (request.POST.get("bulk_confirm") or "").strip().lower()
+        file_obj = request.FILES.get("result_file")
+
+        allowed_tests = set(TEST_NAMES) | {"ALL_EXAMS"}
+        if test_name not in allowed_tests:
+            return JsonResponse({"ok": False, "msg": "Invalid test name"})
+        if not subject_id:
+            return JsonResponse({"ok": False, "msg": "Subject is required"})
+        if not file_obj:
+            return JsonResponse({"ok": False, "msg": "Result file is required"})
+        if upload_mode not in {"subject", "compiled"}:
+            return JsonResponse({"ok": False, "msg": "Invalid upload mode"})
+
+        is_all_tests = test_name == "ALL_EXAMS"
+        is_all_subjects = str(subject_id).upper() == "ALL"
+        if is_all_tests != is_all_subjects:
+            return JsonResponse({"ok": False, "msg": "Please select BOTH ALL EXAMS and ALL subjects for bulk upload."})
+
+        # Bulk replace flow: ALL_EXAMS + ALL subjects (compiled only), excluding REM.
+        if is_all_tests and is_all_subjects:
+            if upload_mode != "compiled":
+                return JsonResponse({"ok": False, "msg": "ALL_EXAMS + ALL subjects is supported only for Compiled sheet mode."})
+            if bulk_confirm != "yes":
+                return JsonResponse({"ok": False, "msg": "Bulk upload cancelled. Please select YES to replace old uploads."})
+
+            summary = import_compiled_bulk_all(file_obj, request.user.username, module=module)
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "msg": (
+                        f"Bulk replace completed. Created uploads: {summary['uploads_created']}. "
+                        f"Rows matched: {summary['rows_matched']}. Failed calls: {summary['rows_failed']}."
+                    ),
+                    "test_name": "ALL_EXAMS",
+                    "subject_name": "ALL",
+                    "upload_id": "",
+                    "mentor_stats": [],
+                    "total_calls": summary["rows_failed"],
+                    "upload_mode": upload_mode,
+                    "found_subjects": summary.get("found_subjects", []),
+                    "used_subject": "ALL",
+                }
+            )
+
+        subject = Subject.objects.filter(id=subject_id, module=module, is_active=True).first()
+        if not subject:
+            return JsonResponse({"ok": False, "msg": "Invalid subject"})
+        if subject.result_format == Subject.FORMAT_T4_ONLY and test_name != "T4":
+            return JsonResponse({"ok": False, "msg": "This subject is configured as Only T4. Please upload in T4."})
+
+        upload, _ = ResultUpload.objects.update_or_create(
+            module=module,
+            test_name=test_name,
+            subject=subject,
+            defaults={"uploaded_by": request.user.username},
+        )
+
+        if upload_mode == "compiled":
+            summary = import_compiled_result_sheet(file_obj, upload)
+        else:
+            summary = import_result_sheet(file_obj, upload)
+
+        mentor_stats = list(
+            ResultCallRecord.objects.filter(upload=upload)
+            .values("student__mentor__name")
+            .annotate(total=Count("id"))
+            .order_by("student__mentor__name")
+        )
+        total_calls = sum(m["total"] for m in mentor_stats)
+
+        return JsonResponse(
+            {
+                "ok": True,
+                "msg": (
+                    f"Processed {summary['rows_total']} rows. "
+                    f"Matched: {summary['rows_matched']}. "
+                    f"Fail calls generated: {summary['rows_failed']}."
+                ),
+                "test_name": test_name,
+                "subject_name": subject.name,
+                "upload_id": upload.id,
+                "mentor_stats": mentor_stats,
+                "total_calls": total_calls,
+                "upload_mode": upload_mode,
+                "found_subjects": summary.get("found_subjects", []),
+                "used_subject": summary.get("used_subject", ""),
+            }
+        )
+    except Exception as e:
+        return JsonResponse({"ok": False, "msg": str(e)})
+
+
+@login_required
+def view_results(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+    module = _active_module(request)
+
+    subjects = list(Subject.objects.filter(module=module, is_active=True).order_by("name"))
+    selected_test = (request.GET.get("test") or "").upper()
+    selected_subject = request.GET.get("subject")
+    selected_filter = request.GET.get("filter", "either_fail")
+    mentor_filter = request.GET.get("mentor", "")
+    sort = request.GET.get("sort", "roll")
+    direction = request.GET.get("dir", "asc")
+
+    latest_upload = ResultUpload.objects.filter(module=module).select_related("subject").order_by("-uploaded_at").first()
+    if not selected_test and not selected_subject and latest_upload:
+        selected_test = latest_upload.test_name
+        selected_subject = str(latest_upload.subject_id)
+
+    if selected_test not in TEST_NAMES:
+        selected_test = latest_upload.test_name if latest_upload else "T1"
+
+    if not selected_subject and subjects:
+        selected_subject = str(subjects[0].id)
+
+    uploads = ResultUpload.objects.filter(module=module).select_related("subject").order_by("test_name", "subject__name")
+    upload_map = {(u.test_name, str(u.subject_id)): u for u in uploads}
+    selected_upload = upload_map.get((selected_test, str(selected_subject))) if selected_subject else None
+    if not selected_upload and latest_upload and not request.GET.get("test") and not request.GET.get("subject"):
+        selected_upload = latest_upload
+        selected_test = latest_upload.test_name
+        selected_subject = str(latest_upload.subject_id)
+
+    matrix_rows = []
+    for test in TEST_NAMES:
+        cells = []
+        for s in subjects:
+            up = upload_map.get((test, str(s.id)))
+            applicable = True
+            if s.result_format == Subject.FORMAT_T4_ONLY and test != "T4":
+                applicable = False
+            cells.append({"subject": s, "upload": up, "applicable": applicable})
+        matrix_rows.append({"test": test, "cells": cells})
+
+    config = _result_filter_config(selected_test)
+    records = []
+    rows = []
+    total_count = 0
+    mentor_counts = []
+    upload_waiting = False
+
+    if selected_subject and not selected_upload:
+        upload_waiting = True
+
+    if selected_upload:
+        base_qs = (
+            StudentResult.objects.filter(upload=selected_upload)
+            .select_related("student", "student__mentor", "upload", "upload__subject")
+        )
+        if selected_filter == config["current_key"]:
+            base_qs = base_qs.filter(marks_current__lt=config["current_threshold"])
+        elif selected_filter == config["total_key"]:
+            base_qs = base_qs.filter(marks_total__lt=config["total_threshold"])
+        elif selected_filter == config["either_key"]:
+            base_qs = base_qs.filter(
+                Q(marks_current__lt=config["current_threshold"]) |
+                Q(marks_total__lt=config["total_threshold"])
+            )
+
+        mentor_counts = (
+            base_qs.values("student__mentor__name")
+            .annotate(c=Count("id"))
+            .order_by("student__mentor__name")
+        )
+        total_count_all = base_qs.count()
+
+        qs = base_qs
+        if mentor_filter:
+            qs = qs.filter(student__mentor__name=mentor_filter)
+
+        sort_map = {
+            "roll": "student__roll_no",
+            "enroll": "student__enrollment",
+            "name": "student__name",
+            "mentor": "student__mentor__name",
+            "exam": "marks_current",
+            "total": "marks_total",
+        }
+        order = sort_map.get(sort, "student__roll_no")
+        if direction == "desc":
+            order = "-" + order
+        records = qs.order_by(order)
+        total_count = records.count()
+
+        # Build previous-upload comparison maps for changed historical marks (same subject only).
+        prev_mark_map = {}
+        for prev_test in ["T1", "T2", "T3"]:
+            prev_upload = (
+                ResultUpload.objects.filter(module=module, test_name=prev_test, subject_id=selected_upload.subject_id)
+                .order_by("-uploaded_at")
+                .first()
+            )
+            if not prev_upload:
+                continue
+            prev_rows = StudentResult.objects.filter(upload=prev_upload).values("student_id", "marks_current")
+            prev_mark_map[prev_test] = {r["student_id"]: r["marks_current"] for r in prev_rows}
+
+        display_columns = config["display_columns"]
+        for r in records:
+            row_cells = []
+            for col in display_columns:
+                key = col["key"]
+                value = None
+                if key == "marks_t4_half":
+                    value = (r.marks_current / 2.0) if r.marks_current is not None else None
+                else:
+                    value = getattr(r, key, None)
+
+                changed = False
+                hover = ""
+                if selected_test in {"T2", "T3", "T4"} and key in {"marks_t1", "marks_t2", "marks_t3"}:
+                    ref_test = "T1" if key == "marks_t1" else ("T2" if key == "marks_t2" else "T3")
+                    prev_value = prev_mark_map.get(ref_test, {}).get(r.student_id)
+                    if prev_value is not None and value is not None and float(prev_value) != float(value):
+                        changed = True
+                        hover = f"Previous {ref_test}: {prev_value}"
+
+                row_cells.append(
+                    {
+                        "key": key,
+                        "label": col["label"],
+                        "value": value,
+                        "is_changed": changed,
+                        "hover": hover,
+                    }
+                )
+
+            rows.append(
+                {
+                    "roll_no": r.student.roll_no,
+                    "enrollment": r.enrollment,
+                    "name": r.student.name,
+                    "mentor": r.student.mentor.name,
+                    "cells": row_cells,
+                }
+            )
+    else:
+        total_count_all = 0
+
+    return render(
+        request,
+        "view_results.html",
+        {
+            "tests": TEST_NAMES,
+            "subjects": subjects,
+            "matrix_rows": matrix_rows,
+            "selected_test": selected_test,
+            "selected_subject": str(selected_subject or ""),
+            "selected_upload": selected_upload,
+            "upload_waiting": upload_waiting,
+            "records": records,
+            "rows": rows,
+            "mentor_counts": mentor_counts,
+            "total_count": total_count,
+            "filter": selected_filter,
+            "filter_current_key": config["current_key"],
+            "filter_current_label": config["current_label"],
+            "filter_total_key": config["total_key"],
+            "filter_total_label": config["total_label"],
+            "filter_either_key": config["either_key"],
+            "filter_either_label": config["either_label"],
+            "exam_col_label": config["exam_col_label"],
+            "total_col_label": config["total_col_label"],
+            "display_columns": config["display_columns"],
+            "table_colspan": 4 + len(config["display_columns"]),
+            "current_threshold": config["current_threshold"],
+            "total_threshold": config["total_threshold"],
+            "mentor_filter": mentor_filter,
+            "total_count_all": total_count_all,
+            "sort": sort,
+            "dir": direction,
+            "dir_roll": next_dir(sort, direction, "roll"),
+            "dir_enroll": next_dir(sort, direction, "enroll"),
+            "dir_name": next_dir(sort, direction, "name"),
+            "dir_mentor": next_dir(sort, direction, "mentor"),
+            "dir_exam": next_dir(sort, direction, "exam"),
+            "dir_total": next_dir(sort, direction, "total"),
+        },
+    )
+
+
+@login_required
+def subjects_page(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+    module = _active_module(request)
+    return render(
+        request,
+        "subjects.html",
+        {
+            "subjects": Subject.objects.filter(module=module).order_by("name"),
+            "format_full": Subject.FORMAT_FULL,
+            "format_t4_only": Subject.FORMAT_T4_ONLY,
+        },
+    )
+
+
+@login_required
+@require_http_methods(["POST"])
+def add_subject(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+    module = _active_module(request)
+    name = (request.POST.get("name") or "").strip()
+    result_format = (request.POST.get("result_format") or Subject.FORMAT_FULL).strip()
+    if not name:
+        messages.error(request, "Subject name is required.")
+        return redirect("/subjects/")
+    if result_format not in {Subject.FORMAT_FULL, Subject.FORMAT_T4_ONLY}:
+        result_format = Subject.FORMAT_FULL
+    Subject.objects.get_or_create(
+        module=module,
+        name=name,
+        defaults={"is_active": True, "result_format": result_format},
+    )
+    messages.success(request, "Subject saved.")
+    return redirect("/subjects/")
+
+
+@login_required
+@require_http_methods(["POST"])
+def edit_subject(request, subject_id):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+    module = _active_module(request)
+    name = (request.POST.get("name") or "").strip()
+    result_format = (request.POST.get("result_format") or Subject.FORMAT_FULL).strip()
+    if not name:
+        messages.error(request, "Subject name is required.")
+        return redirect("/subjects/")
+    subject = Subject.objects.filter(id=subject_id, module=module).first()
+    if subject:
+        subject.name = name
+        if result_format not in {Subject.FORMAT_FULL, Subject.FORMAT_T4_ONLY}:
+            result_format = Subject.FORMAT_FULL
+        subject.result_format = result_format
+        subject.save(update_fields=["name", "result_format"])
+        messages.success(request, "Subject updated.")
+    return redirect("/subjects/")
+
+
+@login_required
+@require_http_methods(["POST"])
+def delete_subject(request, subject_id):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+    module = _active_module(request)
+    subject = Subject.objects.filter(id=subject_id, module=module).first()
+    if subject:
+        subject.is_active = False
+        subject.save(update_fields=["is_active"])
+        messages.success(request, "Subject archived.")
+    return redirect("/subjects/")
+
 def next_dir(current_sort, current_dir, column):
     if current_sort == column and current_dir == "asc":
         return "desc"
@@ -140,15 +666,16 @@ def view_attendance(request):
     # mentors should not access coordinator view
     if "mentor" in request.session:
         return redirect("/mentor-dashboard/")
+    module = _active_module(request)
 
     # get available weeks
-    weeks = Attendance.objects.values_list("week_no", flat=True)\
+    weeks = Attendance.objects.filter(student__module=module).values_list("week_no", flat=True)\
                               .distinct().order_by("week_no")
 
     selected_week = request.GET.get("week")
     # If no week selected → auto open latest week
     if not selected_week:
-        latest = Attendance.objects.order_by("-week_no").first()
+        latest = Attendance.objects.filter(student__module=module).order_by("-week_no").first()
         if latest:
             selected_week = latest.week_no
     filter_type = request.GET.get("filter", "all")
@@ -164,7 +691,7 @@ def view_attendance(request):
     if selected_week:
         selected_week = int(selected_week)
 
-        qs = Attendance.objects.filter(week_no=selected_week)\
+        qs = Attendance.objects.filter(week_no=selected_week, student__module=module)\
             .select_related("student", "student__mentor")
 
         # ---------- FILTERS ----------
@@ -232,8 +759,9 @@ def view_attendance(request):
 
 # ---------------- DELETE WEEK ----------------
 def delete_week(request):
+    module = _active_module(request)
 
-    weeks = Attendance.objects.values_list("week_no", flat=True)\
+    weeks = Attendance.objects.filter(student__module=module).values_list("week_no", flat=True)\
                               .distinct().order_by("week_no")
 
     message = ""
@@ -242,8 +770,8 @@ def delete_week(request):
     if request.method == "POST" and "delete_week" in request.POST:
         week_no = int(request.POST.get("week"))
 
-        Attendance.objects.filter(week_no=week_no).delete()
-        CallRecord.objects.filter(week_no=week_no).delete()
+        Attendance.objects.filter(week_no=week_no, student__module=module).delete()
+        CallRecord.objects.filter(week_no=week_no, student__module=module).delete()
 
         message = f"Week-{week_no} deleted successfully"
 
@@ -254,8 +782,8 @@ def delete_week(request):
         user = authenticate(username=request.user.username, password=password)
 
         if user:
-            Attendance.objects.all().delete()
-            CallRecord.objects.all().delete()
+            Attendance.objects.filter(student__module=module).delete()
+            CallRecord.objects.filter(student__module=module).delete()
             message = "ALL WEEKS DELETED"
         else:
             message = "Wrong password"
@@ -266,11 +794,52 @@ def delete_week(request):
     })
 
 
+@login_required
+def delete_results(request):
+    if "mentor" in request.session:
+        return redirect("/")
+    module = _active_module(request)
+
+    uploads = ResultUpload.objects.filter(module=module).select_related("subject").order_by("-uploaded_at")
+    message = ""
+
+    if request.method == "POST" and "delete_upload" in request.POST:
+        upload_id = request.POST.get("upload_id")
+        upload = ResultUpload.objects.filter(id=upload_id, module=module).select_related("subject").first()
+        if upload:
+            label = f"{upload.test_name} - {upload.subject.name}"
+            upload.delete()
+            message = f"Deleted result upload: {label}"
+        else:
+            message = "Upload not found."
+
+    if request.method == "POST" and "delete_all" in request.POST:
+        password = request.POST.get("password")
+        user = authenticate(username=request.user.username, password=password)
+        if user:
+            ResultUpload.objects.filter(module=module).delete()
+            message = "ALL RESULT UPLOADS DELETED"
+        else:
+            message = "Wrong password"
+
+    uploads = ResultUpload.objects.filter(module=module).select_related("subject").order_by("-uploaded_at")
+    return render(
+        request,
+        "delete_results.html",
+        {
+            "uploads": uploads,
+            "message": message,
+        },
+    )
+
+
 # ---------------- LOCK WEEK ----------------
 def lock_week(request):
+    module = _active_module(request)
     if request.method == "POST":
         week = int(request.POST.get("week"))
         WeekLock.objects.update_or_create(
+            module=module,
             week_no=week,
             defaults={"locked": True}
         )
@@ -280,16 +849,14 @@ def lock_week(request):
 
 # ---------------- MENTOR DASHBOARD ----------------
 def mentor_dashboard(request):
-
-    mentor_name = request.session.get("mentor")
-    if not mentor_name:
+    mentor = _session_mentor_obj(request)
+    if not mentor:
         return redirect("/")
-
-    mentor = Mentor.objects.get(name=mentor_name)
+    module = _active_module(request)
 
     # all uploaded weeks
     weeks = sorted(
-        Attendance.objects.values_list("week_no", flat=True).distinct()
+        Attendance.objects.filter(student__module=module).values_list("week_no", flat=True).distinct()
     )
 
     # selected week
@@ -305,13 +872,14 @@ def mentor_dashboard(request):
     if selected_week:
         records = CallRecord.objects.filter(
             student__mentor=mentor,
+            student__module=module,
             week_no=selected_week
         ).select_related("student")
 
     # build attendance map
     attendance_map = {}
     if selected_week:
-        atts = Attendance.objects.filter(week_no=selected_week, student__mentor=mentor)
+        atts = Attendance.objects.filter(week_no=selected_week, student__mentor=mentor, student__module=module)
         for a in atts:
             attendance_map[a.student_id] = a
     
@@ -321,6 +889,7 @@ def mentor_dashboard(request):
     if selected_week:
         week_calls = CallRecord.objects.filter(
             student__mentor=mentor,
+            student__module=module,
             week_no=selected_week
         )
 
@@ -341,15 +910,97 @@ def mentor_dashboard(request):
         "all_done": all_done,
         "not_connected": not_connected
     })
+def mentor_other_calls(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+    module = _active_module(request)
+    students = Student.objects.filter(module=module, mentor=mentor).order_by("roll_no", "name")
 
+    existing = {
+        x.student_id: x
+        for x in OtherCallRecord.objects.filter(mentor=mentor, student__module=module, student__in=students).select_related("student")
+    }
+    to_create = []
+    for s in students:
+        if s.id not in existing:
+            to_create.append(OtherCallRecord(student=s, mentor=mentor))
+    if to_create:
+        OtherCallRecord.objects.bulk_create(to_create)
+
+    qs = (
+        OtherCallRecord.objects.filter(mentor=mentor, student__module=module)
+        .select_related("student")
+        .order_by("student__roll_no", "student__name")
+    )
+    status_weight = {None: 0, "": 0, "not_received": 1, "received": 2}
+    records = sorted(
+        list(qs),
+        key=lambda x: (status_weight.get(x.final_status, 0), x.student.roll_no or 999999),
+    )
+    return render(
+        request,
+        "mentor_other_calls.html",
+        {
+            "mentor": mentor,
+            "records": records,
+        },
+    )
+
+
+def save_other_call(request):
+    if request.method != "POST":
+        return JsonResponse({"ok": False})
+
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return JsonResponse({"ok": False, "msg": "Unauthorized"}, status=401)
+    module = _active_module(request)
+
+    call = OtherCallRecord.objects.select_related("student", "mentor").filter(
+        id=request.POST.get("id"),
+        mentor=mentor,
+        student__module=module,
+    ).first()
+    if not call:
+        return JsonResponse({"ok": False, "msg": "Call not found"}, status=404)
+
+    status = request.POST.get("status")
+    talked = request.POST.get("talked")
+    duration = request.POST.get("duration")
+    remark = request.POST.get("remark")
+    call_reason = request.POST.get("call_reason")
+    target = request.POST.get("target")
+
+    if not call.attempt1_time:
+        call.attempt1_time = timezone.now()
+    elif not call.attempt2_time:
+        call.attempt2_time = timezone.now()
+
+    if target in {"student", "father"}:
+        call.last_called_target = target
+
+    if status == "received":
+        call.final_status = "received"
+        call.talked_with = talked
+        call.duration = duration
+        call.parent_remark = remark or ""
+        call.call_done_reason = call_reason or ""
+    elif status == "not_received":
+        call.final_status = "not_received"
+        call.call_done_reason = call_reason or call.call_done_reason
+
+    call.save()
+    return JsonResponse({"ok": True})
 
 
 # ---------------- SAVE CALL ----------------
 def save_call(request):
 
     if request.method == "POST":
+        module = _active_module(request)
 
-        call = CallRecord.objects.get(id=request.POST.get("id"))
+        call = CallRecord.objects.get(id=request.POST.get("id"), student__module=module)
         status = request.POST.get("status")
         talked = request.POST.get("talked")
         duration = request.POST.get("duration")
@@ -376,7 +1027,8 @@ def save_call(request):
 # ---------------- MESSAGE SENT ----------------
 def mark_message(request):
     if request.method=="POST":
-        call=CallRecord.objects.get(id=request.POST.get("id"))
+        module = _active_module(request)
+        call=CallRecord.objects.get(id=request.POST.get("id"), student__module=module)
         call.message_sent=True
         call.save()
         return JsonResponse({"ok":True})
@@ -384,10 +1036,10 @@ def mark_message(request):
 
 # ---------------- MENTOR REPORT ----------------
 def mentor_report(request):
-
-    mentor = request.session.get("mentor")
-    if not mentor:
+    mentor_obj = _session_mentor_obj(request)
+    if not mentor_obj:
         return redirect("/")
+    module = _active_module(request)
 
     week = request.GET.get("week")
     if not week:
@@ -395,26 +1047,26 @@ def mentor_report(request):
 
     week = int(week)
 
-    students = Student.objects.filter(mentor__name=mentor).count()
+    students = Student.objects.filter(module=module, mentor=mentor_obj).count()
 
     below80 = Attendance.objects.filter(
-        week_no=week, student__mentor__name=mentor, call_required=True
+        week_no=week, student__mentor=mentor_obj, student__module=module, call_required=True
     ).count()
 
     calls_done = CallRecord.objects.filter(
-        week_no=week, student__mentor__name=mentor, final_status__isnull=False
+        week_no=week, student__mentor=mentor_obj, student__module=module, final_status__isnull=False
     ).count()
 
     received = CallRecord.objects.filter(
-        week_no=week, student__mentor__name=mentor, final_status="received"
+        week_no=week, student__mentor=mentor_obj, student__module=module, final_status="received"
     ).count()
 
     not_received = CallRecord.objects.filter(
-        week_no=week, student__mentor__name=mentor, final_status="not_received"
+        week_no=week, student__mentor=mentor_obj, student__module=module, final_status="not_received"
     ).count()
 
     message_done = CallRecord.objects.filter(
-        week_no=week, student__mentor__name=mentor, message_sent=True
+        week_no=week, student__mentor=mentor_obj, student__module=module, message_sent=True
     ).count()
 
     not_done = below80 - calls_done
@@ -422,7 +1074,7 @@ def mentor_report(request):
     report = f"""
 Follow up Attendance < 80% (Week-{week} only & Overall Week-01 to {week}):
 
-Mentor Name: {mentor}
+Mentor Name: {mentor_obj.name}
 Total no. Of students under mentorship: {students}
 No. Of students under mentorship whose attendance < 80%: {below80}
 No. Of call done: {calls_done}
@@ -435,10 +1087,176 @@ Call not done: {not_done}
     return render(request,"mentor_report.html",{"report":report,"week":week})
 
 
+def mentor_result_calls(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+    module = _active_module(request)
+    uploads = list(
+        ResultUpload.objects.filter(module=module, calls__student__mentor=mentor, calls__student__module=module)
+        .distinct()
+        .order_by("-uploaded_at")
+    )
+
+    selected_upload = None
+    upload_id = request.GET.get("upload")
+    if upload_id:
+        selected_upload = ResultUpload.objects.filter(id=upload_id, module=module).first()
+    if not selected_upload and uploads:
+        selected_upload = uploads[0]
+
+    records = []
+    all_done = False
+    not_connected = []
+    if selected_upload:
+        records = (
+            ResultCallRecord.objects.filter(upload=selected_upload, student__mentor=mentor)
+            .filter(student__module=module)
+            .select_related("student", "upload", "upload__subject")
+            .order_by("student__roll_no", "student__name")
+        )
+        total = records.count()
+        finished = records.exclude(final_status__isnull=True).count()
+        if total > 0 and total == finished:
+            all_done = True
+            not_connected = records.filter(final_status="not_received")
+
+    return render(
+        request,
+        "mentor_result_calls.html",
+        {
+            "mentor": mentor,
+            "uploads": uploads,
+            "selected_upload": selected_upload,
+            "records": records,
+            "all_done": all_done,
+            "not_connected": not_connected,
+        },
+    )
+
+
+def save_result_call(request):
+    if request.method != "POST":
+        return JsonResponse({"ok": False})
+
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return JsonResponse({"ok": False, "msg": "Unauthorized"}, status=401)
+    module = _active_module(request)
+
+    call = ResultCallRecord.objects.select_related("student", "student__mentor").filter(
+        id=request.POST.get("id"),
+        student__mentor=mentor,
+        student__module=module,
+    ).first()
+    if not call:
+        return JsonResponse({"ok": False, "msg": "Call not found"}, status=404)
+
+    status = request.POST.get("status")
+    talked = request.POST.get("talked")
+    duration = request.POST.get("duration")
+    reason = request.POST.get("reason")
+
+    if not call.attempt1_time:
+        call.attempt1_time = timezone.now()
+    elif not call.attempt2_time:
+        call.attempt2_time = timezone.now()
+
+    if status == "received":
+        call.final_status = "received"
+        call.talked_with = talked
+        call.duration = duration
+        call.parent_reason = reason
+    elif status == "not_received":
+        call.final_status = "not_received"
+
+    call.save()
+    return JsonResponse({"ok": True})
+
+
+def mark_result_message(request):
+    if request.method != "POST":
+        return JsonResponse({"ok": False})
+
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return JsonResponse({"ok": False, "msg": "Unauthorized"}, status=401)
+    module = _active_module(request)
+
+    call = ResultCallRecord.objects.select_related("student", "student__mentor").filter(
+        id=request.POST.get("id"),
+        student__mentor=mentor,
+        student__module=module,
+    ).first()
+    if not call:
+        return JsonResponse({"ok": False, "msg": "Call not found"}, status=404)
+
+    call.message_sent = True
+    call.save(update_fields=["message_sent"])
+    return JsonResponse({"ok": True})
+
+
+def mentor_result_report(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+    module = _active_module(request)
+
+    uploads = list(
+        ResultUpload.objects.filter(module=module, calls__student__mentor=mentor, calls__student__module=module)
+        .distinct()
+        .order_by("-uploaded_at")
+    )
+
+    selected_upload = None
+    upload_id = request.GET.get("upload")
+    if upload_id:
+        selected_upload = ResultUpload.objects.filter(id=upload_id, module=module).first()
+    if not selected_upload and uploads:
+        selected_upload = uploads[0]
+
+    report = ""
+    if selected_upload:
+        calls = ResultCallRecord.objects.filter(
+            upload=selected_upload,
+            student__mentor=mentor,
+            student__module=module,
+        )
+        total = calls.count()
+        received = calls.filter(final_status="received").count()
+        not_received = calls.filter(final_status="not_received").count()
+        message_done = calls.filter(message_sent=True).count()
+        report = _result_report_text(
+            selected_upload.test_name,
+            selected_upload.subject.name,
+            mentor.name,
+            total,
+            received,
+            not_received,
+            message_done,
+        )
+
+    return render(
+        request,
+        "mentor_result_report.html",
+        {
+            "uploads": uploads,
+            "selected_upload": selected_upload,
+            "report": report,
+        },
+    )
+
+
 # ---------------- PDF PRINT ----------------
 def print_student(request, enrollment):
+    if not request.user.is_authenticated and "mentor" not in request.session:
+        return redirect("/")
 
-    student = Student.objects.get(enrollment=enrollment)
+    module = _active_module(request)
+    student = Student.objects.select_related("mentor").get(module=module, enrollment=enrollment)
+    mentor = _session_mentor_obj(request)
+    if mentor and student.mentor_id != mentor.id:
+        return HttpResponse("Unauthorized", status=403)
 
     response = HttpResponse(content_type='application/pdf')
     response['Content-Disposition'] = f'inline; filename="{student.name}.pdf"'
@@ -452,36 +1270,37 @@ def coordinator_dashboard(request):
 
     if "mentor" in request.session:
         return redirect("/mentor-dashboard/")
+    module = _active_module(request)
 
     week = request.GET.get("week")
     if not week:
         return render(request,"coordinator_dashboard.html")
 
     week = int(week)
-    mentors = Mentor.objects.all()
+    mentors = Mentor.objects.filter(student__module=module).distinct()
     data = []
 
     for m in mentors:
 
-        total_students = Student.objects.filter(mentor=m).count()
+        total_students = Student.objects.filter(module=module, mentor=m).count()
 
         need_call = Attendance.objects.filter(
-            week_no=week, student__mentor=m, call_required=True
+            week_no=week, student__mentor=m, student__module=module, call_required=True
         ).count()
 
         received = CallRecord.objects.filter(
-            week_no=week, student__mentor=m, final_status="received"
+            week_no=week, student__mentor=m, student__module=module, final_status="received"
         ).count()
 
         not_received = CallRecord.objects.filter(
-            week_no=week, student__mentor=m, final_status="not_received"
+            week_no=week, student__mentor=m, student__module=module, final_status="not_received"
         ).count()
 
         done = received + not_received
         not_done = max(need_call - done, 0)
 
         message_sent = CallRecord.objects.filter(
-            week_no=week, student__mentor=m, message_sent=True
+            week_no=week, student__mentor=m, student__module=module, message_sent=True
         ).count()
 
         percent = round((done/need_call)*100,1) if need_call else 0
@@ -500,19 +1319,85 @@ def coordinator_dashboard(request):
 
     return render(request,"coordinator_dashboard.html",{"data":data,"week":week})
 
+
+@login_required
+def coordinator_result_report(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+    module = _active_module(request)
+
+    uploads = ResultUpload.objects.filter(module=module).order_by("-uploaded_at")
+    selected_upload = None
+    upload_id = request.GET.get("upload")
+    if upload_id:
+        selected_upload = ResultUpload.objects.filter(id=upload_id, module=module).first()
+    if not selected_upload:
+        selected_upload = uploads.first()
+
+    data = []
+    if selected_upload:
+        mentors = (
+            Mentor.objects.filter(student__module=module, student__resultcallrecord__upload=selected_upload)
+            .distinct()
+            .order_by("name")
+        )
+        for m in mentors:
+            qs = ResultCallRecord.objects.filter(upload=selected_upload, student__mentor=m, student__module=module)
+            need_call = qs.count()
+            received = qs.filter(final_status="received").count()
+            not_received = qs.filter(final_status="not_received").count()
+            done = received + not_received
+            not_done = max(need_call - done, 0)
+            msg_sent = qs.filter(message_sent=True).count()
+            percent = round((done / need_call) * 100, 1) if need_call else 0
+            data.append(
+                {
+                    "mentor": m.name,
+                    "need_call": need_call,
+                    "done": done,
+                    "received": received,
+                    "not_received": not_received,
+                    "not_done": not_done,
+                    "msg_sent": msg_sent,
+                    "percent": percent,
+                }
+            )
+
+    return render(
+        request,
+        "coordinator_result_report.html",
+        {
+            "uploads": uploads,
+            "selected_upload": selected_upload,
+            "data": data,
+        },
+    )
+
 def update_mobile(request):
 
     if request.method == "POST":
+        if not request.user.is_authenticated and "mentor" not in request.session:
+            return JsonResponse({"ok": False, "error": "Unauthorized"}, status=401)
+
+        module = _active_module(request)
         enrollment = request.POST.get("enrollment")
         field = request.POST.get("field")
         value = request.POST.get("value")
 
-        student = Student.objects.get(enrollment=enrollment)
+        student = Student.objects.get(module=module, enrollment=enrollment)
+        mentor = _session_mentor_obj(request)
+        is_mentor_update = bool(mentor)
+        if is_mentor_update and student.mentor_id != mentor.id:
+            return JsonResponse({"ok": False, "error": "Unauthorized"}, status=403)
 
         if field == "father":
             student.father_mobile = value
+            student.father_mobile_updated_by_mentor = is_mentor_update
         elif field == "mother":
             student.mother_mobile = value
+        elif field == "student":
+            student.student_mobile = value
+            student.student_mobile_updated_by_mentor = is_mentor_update
 
         student.save()
 
@@ -525,21 +1410,103 @@ def control_panel(request):
     if "mentor" in request.session:
         return redirect("/")
 
-    students = Student.objects.select_related("mentor").all().order_by("roll_no")
+    module = _active_module(request)
+    students = Student.objects.select_related("mentor").filter(module=module).order_by("roll_no")
 
     return render(request,"control_panel.html",{"students":students})
+
+
+def mentor_print_sif(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+    module = _active_module(request)
+
+    students = Student.objects.select_related("mentor").filter(module=module, mentor=mentor).order_by("roll_no", "name")
+    return render(
+        request,
+        "mentor_print_sif.html",
+        {
+            "mentor": mentor,
+            "students": students,
+        },
+    )
+
+
+# ---------------- MODULE SWITCH ----------------
+@require_http_methods(["POST"])
+def switch_module(request):
+    if not request.user.is_authenticated and "mentor" not in request.session:
+        return redirect("/")
+    module_id = request.POST.get("module_id")
+    module = AcademicModule.objects.filter(id=module_id, is_active=True).first()
+    if module:
+        request.session["current_module_id"] = module.id
+    next_url = request.POST.get("next") or request.META.get("HTTP_REFERER") or "/reports/"
+    return redirect(next_url)
+
+
+@login_required
+def manage_modules(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+
+    if request.method == "POST":
+        batch = (request.POST.get("academic_batch") or "").strip()
+        year_level = (request.POST.get("year_level") or "FY").strip()
+        variant = (request.POST.get("variant") or "FY2-CE").strip()
+        semester = (request.POST.get("semester") or "Sem-1").strip()
+        if not batch:
+            messages.error(request, "Batch is required.")
+            return redirect("/modules/")
+        if year_level not in {x[0] for x in AcademicModule.YEAR_CHOICES}:
+            year_level = "FY"
+        if variant not in {x[0] for x in AcademicModule.VARIANT_CHOICES}:
+            variant = "FY2-CE"
+        if semester not in {x[0] for x in AcademicModule.SEM_CHOICES}:
+            semester = "Sem-1"
+
+        name = f"{variant} - Batch {batch}_{semester}"
+        module, created = AcademicModule.objects.get_or_create(
+            name=name,
+            defaults={
+                "academic_batch": batch,
+                "year_level": year_level,
+                "variant": variant,
+                "semester": semester,
+                "is_active": True,
+            },
+        )
+        request.session["current_module_id"] = module.id
+        if created:
+            messages.success(request, f"Module created: {module.name}")
+        else:
+            messages.info(request, f"Module already exists: {module.name}")
+        return redirect("/modules/")
+
+    return render(
+        request,
+        "modules.html",
+        {
+            "modules": AcademicModule.objects.filter(is_active=True).order_by("-id"),
+            "year_choices": AcademicModule.YEAR_CHOICES,
+            "variant_choices": AcademicModule.VARIANT_CHOICES,
+            "sem_choices": AcademicModule.SEM_CHOICES,
+        },
+    )
 
 
 # ---------------- SEM REGISTER ----------------
 
 def semester_register(request):
+    module = _active_module(request)
 
     # all uploaded weeks
     weeks = sorted(
-        Attendance.objects.values_list("week_no", flat=True).distinct()
+        Attendance.objects.filter(student__module=module).values_list("week_no", flat=True).distinct()
     )
 
-    students = Student.objects.select_related("mentor").all().order_by("roll_no")
+    students = Student.objects.select_related("mentor").filter(module=module).order_by("roll_no")
 
     table = []
 

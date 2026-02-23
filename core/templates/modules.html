@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<h4>Manage Modules</h4>
+{% if messages %}
+    {% for m in messages %}
+    <div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>
+    {% endfor %}
+{% endif %}
+
+<div class="card p-3 mb-3">
+    <h6 class="mb-3">Add New Module</h6>
+    <form method="post" class="row g-2">
+        {% csrf_token %}
+        <div class="col-md-3">
+            <label class="form-label">Batch</label>
+            <input type="text" name="academic_batch" class="form-control" placeholder="2026-29" required>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Year</label>
+            <select name="year_level" class="form-select">
+                {% for v,l in year_choices %}
+                <option value="{{v}}">{{l}}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Variant</label>
+            <select name="variant" class="form-select">
+                {% for v,l in variant_choices %}
+                <option value="{{v}}" {% if v == "FY2-CE" %}selected{% endif %}>{{l}}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Semester</label>
+            <select name="semester" class="form-select">
+                {% for v,l in sem_choices %}
+                <option value="{{v}}">{{l}}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+            <button class="btn btn-lj w-100">Create Module</button>
+        </div>
+    </form>
+</div>
+
+<div class="card p-3">
+    <h6 class="mb-2">Existing Modules</h6>
+    <table class="table table-sm table-bordered">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Batch</th>
+                <th>Year</th>
+                <th>Variant</th>
+                <th>Semester</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in modules %}
+            <tr>
+                <td>{{m.name}}</td>
+                <td>{{m.academic_batch}}</td>
+                <td>{{m.year_level}}</td>
+                <td>{{m.variant}}</td>
+                <td>{{m.semester}}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
