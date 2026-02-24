@@ -17,6 +17,19 @@
             <input name="name" class="form-control" placeholder="Subject name" required>
         </div>
         <div>
+            <input name="short_name" class="form-control" placeholder="Short name (e.g. SE, ES, IOT)" required>
+        </div>
+        <div class="border rounded p-2">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="has_theory" id="has_theory_add" checked>
+                <label class="form-check-label" for="has_theory_add">TH</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="has_practical" id="has_practical_add" checked>
+                <label class="form-check-label" for="has_practical_add">PR</label>
+            </div>
+        </div>
+        <div id="add-format-wrap">
             <div class="form-check">
                 <input class="form-check-input" type="radio" name="result_format" id="fmt_full_add" value="{{format_full}}" checked>
                 <label class="form-check-label" for="fmt_full_add">T1/T2/T3/T4</label>
@@ -37,7 +50,9 @@
             <thead class="table-dark">
                 <tr>
                     <th>Name</th>
+                    <th>Short</th>
                     <th>Status</th>
+                    <th>TH/PR</th>
                     <th>Format</th>
                     <th style="width:360px;">Actions</th>
                 </tr>
@@ -46,13 +61,29 @@
                 {% for s in subjects %}
                 <tr>
                     <td>{{s.name}}</td>
+                    <td>{{s.short_name|default:"-"}}</td>
                     <td>{% if s.is_active %}Active{% else %}Archived{% endif %}</td>
+                    <td>
+                        {% if s.has_theory %}TH{% else %}-{% endif %} /
+                        {% if s.has_practical %}PR{% else %}-{% endif %}
+                    </td>
                     <td>{% if s.result_format == format_t4_only %}Only T4{% else %}T1/T2/T3/T4{% endif %}</td>
                     <td>
                         <form method="post" action="/subjects/{{s.id}}/edit/" class="d-flex gap-2 flex-wrap align-items-end">
                             {% csrf_token %}
                             <input name="name" class="form-control form-control-sm" value="{{s.name}}" required style="max-width:220px;">
-                            <div>
+                            <input name="short_name" class="form-control form-control-sm" value="{{s.short_name}}" required style="max-width:160px;">
+                            <div class="border rounded p-2">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="has_theory" id="has_theory_{{s.id}}" {% if s.has_theory %}checked{% endif %}>
+                                    <label class="form-check-label" for="has_theory_{{s.id}}">TH</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="has_practical" id="has_practical_{{s.id}}" {% if s.has_practical %}checked{% endif %}>
+                                    <label class="form-check-label" for="has_practical_{{s.id}}">PR</label>
+                                </div>
+                            </div>
+                            <div id="edit-format-wrap-{{s.id}}">
                                 <div class="form-check">
                                     <input class="form-check-input" type="radio" name="result_format" id="fmt_full_{{s.id}}" value="{{format_full}}" {% if s.result_format != format_t4_only %}checked{% endif %}>
                                     <label class="form-check-label" for="fmt_full_{{s.id}}">T1/T2/T3/T4</label>
@@ -73,11 +104,46 @@
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="3">No subjects added yet.</td></tr>
+                <tr><td colspan="6">No subjects added yet.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
+
+<script>
+function toggleFormatForForm(thCheckbox, wrapEl){
+    if(!thCheckbox || !wrapEl){ return; }
+    const radios = wrapEl.querySelectorAll('input[type="radio"][name="result_format"]');
+    const enabled = thCheckbox.checked;
+    wrapEl.style.opacity = enabled ? "1" : "0.45";
+    wrapEl.style.filter = enabled ? "none" : "blur(0.2px)";
+    radios.forEach(r => {
+        r.disabled = !enabled;
+        if(!enabled){
+            if(r.value === "{{format_full}}"){ r.checked = true; }
+        }
+    });
+}
+
+document.addEventListener("DOMContentLoaded", function(){
+    const addTh = document.getElementById("has_theory_add");
+    const addWrap = document.getElementById("add-format-wrap");
+    if(addTh && addWrap){
+        const syncAdd = () => toggleFormatForForm(addTh, addWrap);
+        addTh.addEventListener("change", syncAdd);
+        syncAdd();
+    }
+
+    document.querySelectorAll('input[id^="has_theory_"]').forEach(function(th){
+        const id = th.id.replace("has_theory_", "");
+        const wrap = document.getElementById("edit-format-wrap-" + id);
+        if(!wrap){ return; }
+        const sync = () => toggleFormatForForm(th, wrap);
+        th.addEventListener("change", sync);
+        sync();
+    });
+});
+</script>
 
 {% endblock %}

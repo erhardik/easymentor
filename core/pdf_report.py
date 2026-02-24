@@ -5,7 +5,16 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .models import Attendance, CallRecord, OtherCallRecord, ResultCallRecord, StudentResult
+from .models import (
+    Attendance,
+    CallRecord,
+    OtherCallRecord,
+    ResultCallRecord,
+    ResultUpload,
+    StudentPracticalMark,
+    StudentResult,
+    Subject,
+)
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -119,6 +128,94 @@ def _table_style():
 
 def _title(style_sheet, text):
     return Paragraph(f"<b>{text}</b>", style_sheet["Title"])
+
+
+def _footer_page_label(page_no):
+    # Hard-copy aligned numbering requested by user.
+    # Typical generated flow:
+    # 1: Less attendance, 2: Poor result, 3: Other calls, 4: SIF marks
+    mapping = {
+        1: 18,
+        2: 26,
+        3: 30,
+        4: 6,
+    }
+    return mapping.get(page_no, page_no)
+
+
+def _draw_footer(canvas, doc, student):
+    page_no = canvas.getPageNumber()
+    width, _height = landscape(A4)
+    canvas.saveState()
+    canvas.setFont("Helvetica", 9)
+    canvas.setFillColor(colors.HexColor("#334155"))
+    canvas.drawString(doc.leftMargin, 10, f"Page { _footer_page_label(page_no) }")
+    right_text = f"{student.enrollment} - {student.name}"
+    canvas.drawRightString(width - doc.rightMargin, 10, right_text)
+    canvas.restoreState()
+
+
+def _subject_priority(subject):
+    key = ((subject.short_name or subject.name or "").strip().lower()).replace(" ", "")
+    order = ["maths1", "maths", "phy", "physics", "java1", "java", "se", "es", "iot", "cws"]
+    for idx, token in enumerate(order, start=1):
+        if token in key:
+            return idx
+    return 99
+
+
+def _ordered_subjects(module):
+    subjects = list(Subject.objects.filter(module=module, is_active=True))
+    subjects.sort(key=lambda s: ((s.display_order if s.display_order and s.display_order > 0 else 999999), _subject_priority(s), (s.short_name or s.name or "").lower()))
+    return subjects
+
+
+def _fmt_mark(v):
+    if v is None:
+        return "-"
+    try:
+        if float(v).is_integer():
+            return str(int(v))
+        return str(round(float(v), 2))
+    except Exception:
+        return str(v)
+
+
+def _latest_student_result(student, subject):
+    upload = (
+        ResultUpload.objects.filter(module=student.module, subject=subject)
+        .order_by("-uploaded_at")
+        .first()
+    )
+    if not upload:
+        return None
+    return StudentResult.objects.filter(upload=upload, student=student).first()
+
+
+def _sif_marks_rows(student):
+    subjects = _ordered_subjects(student.module)
+    practical_map = {
+        pm.subject_id: pm
+        for pm in StudentPracticalMark.objects.filter(module=student.module, student=student).select_related("subject")
+    }
+    rows = []
+    for s in subjects:
+        short = (s.short_name or s.name).strip()
+        pm = practical_map.get(s.id)
+        sr = _latest_student_result(student, s)
+        attendance = _fmt_mark(pm.attendance_percentage) if pm and pm.attendance_percentage is not None else "-"
+
+        t1 = sr.marks_t1 if sr and sr.marks_t1 is not None else (sr.marks_current if sr and sr.upload.test_name == "T1" else None)
+        t2 = sr.marks_t2 if sr and sr.marks_t2 is not None else (sr.marks_current if sr and sr.upload.test_name == "T2" else None)
+        t3 = sr.marks_t3 if sr and sr.marks_t3 is not None else (sr.marks_current if sr and sr.upload.test_name == "T3" else None)
+        t4 = sr.marks_t4 if sr and sr.marks_t4 is not None else (sr.marks_current if sr and sr.upload.test_name == "T4" else None)
+        rows.append(
+            [f"{short}-TH", _fmt_mark(t1), _fmt_mark(t2), _fmt_mark(t3), _fmt_mark(t4), _fmt_mark(sr.marks_total if sr else None), attendance]
+        )
+        rows.append(
+            [f"{short}-PR", "-", "-", "-", "-", _fmt_mark(pm.pr_marks) if pm and pm.pr_marks is not None else "-", attendance]
+        )
+    return rows
 
 
 def generate_student_pdf(response, student):
@@ -321,7 +418,37 @@ def generate_student_pdf(response, student):
     other_table.setStyle(_table_style())
     elements.append(other_table)
 
-    doc.build(elements)
+    # ---------------- SIF Marks (TH/PR + Attendance) ----------------
+    elements.append(PageBreak())
+    elements.append(_title(styles, "Regular Result (Theory + Practical)"))
+    elements.append(Spacer(1, 8))
+
+    marks_headers = [
+        "Sub Name",
+        "T1 CCE (25)",
+        "T2 CCE (25)",
+        "T3 CCE (25)",
+        "T4 SEE (50)",
+        "Final Total (100)",
+        "Attendance %",
+    ]
+    marks_data = [[_p(x, h_style) for x in marks_headers]]
+    marks_rows = _sif_marks_rows(student)
+    for r in marks_rows:
+        marks_data.append([_p(r[0], c_style), _p(r[1], c_style), _p(r[2], c_style), _p(r[3], c_style), _p(r[4], c_style), _p(r[5], c_style), _p(r[6], c_style)])
+
+    marks_widths = [150, 72, 72, 72, 72, 88, 78]
+    marks_table = Table(marks_data, colWidths=marks_widths, repeatRows=1)
+    marks_style = _table_style()
+    for row_idx in range(1, len(marks_data), 2):
+        if row_idx + 1 < len(marks_data):
+            marks_style.add("SPAN", (6, row_idx), (6, row_idx + 1))
+            marks_style.add("VALIGN", (6, row_idx), (6, row_idx + 1), "MIDDLE")
+    marks_table.setStyle(marks_style)
+    elements.append(marks_table)
+
+    footer = lambda c, d: _draw_footer(c, d, student)
+    doc.build(elements, onFirstPage=footer, onLaterPages=footer)
 
 
 def generate_student_prefilled_pdf(response, student):
@@ -455,5 +582,34 @@ def generate_student_prefilled_pdf(response, student):
     result_table = Table(result_data, colWidths=result_widths, repeatRows=1)
     result_table.setStyle(_table_style())
     elements.append(result_table)
-    doc.build(elements)
+
+    # ---------------- SIF Marks (TH/PR + Attendance) ----------------
+    elements.append(PageBreak())
+    elements.append(_title(styles, "Regular Result (Theory + Practical)"))
+    elements.append(Spacer(1, 8))
+
+    marks_headers = [
+        "Sub Name",
+        "T1 CCE (25)",
+        "T2 CCE (25)",
+        "T3 CCE (25)",
+        "T4 SEE (50)",
+        "Final Total (100)",
+        "Attendance %",
+    ]
+    marks_data = [[_p(x, h_style) for x in marks_headers]]
+    for r in _sif_marks_rows(student):
+        marks_data.append([_p(r[0], c_style), _p(r[1], c_style), _p(r[2], c_style), _p(r[3], c_style), _p(r[4], c_style), _p(r[5], c_style), _p(r[6], c_style)])
+
+    marks_widths = [150, 72, 72, 72, 72, 88, 78]
+    marks_table = Table(marks_data, colWidths=marks_widths, repeatRows=1)
+    marks_style = _table_style()
+    for row_idx in range(1, len(marks_data), 2):
+        if row_idx + 1 < len(marks_data):
+            marks_style.add("SPAN", (6, row_idx), (6, row_idx + 1))
+            marks_style.add("VALIGN", (6, row_idx), (6, row_idx + 1), "MIDDLE")
+    marks_table.setStyle(marks_style)
+    elements.append(marks_table)
+    footer = lambda c, d: _draw_footer(c, d, student)
+    doc.build(elements, onFirstPage=footer, onLaterPages=footer)
 

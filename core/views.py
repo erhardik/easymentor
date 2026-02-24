@@ -31,10 +31,13 @@ from .models import (
     CallRecord,
     Mentor,
     OtherCallRecord,
+    PracticalMarkUpload,
+    SifMarksLock,
     ResultCallRecord,
     ResultUpload,
     ResultUploadJob,
     Student,
+    StudentPracticalMark,
     StudentResult,
     Subject,
     WeekLock,
@@ -44,6 +47,7 @@ from .models import (
 from .utils import import_students_from_excel, resolve_mentor_identity
 from .attendance_utils import import_attendance
 from .result_utils import import_compiled_bulk_all, import_compiled_result_sheet, import_result_sheet
+from .practical_utils import import_practical_marks, ordered_subjects
 from .pdf_report import generate_student_pdf, generate_student_prefilled_pdf
 from .module_utils import get_current_module
 
@@ -60,6 +64,90 @@ def _session_mentor_obj(request):
 
 def _active_module(request):
     return get_current_module(request)
+
+
+def _ensure_subject_display_order(module):
+    subjects = list(Subject.objects.filter(module=module, is_active=True).order_by("display_order", "name"))
+    changed = False
+    next_order = 1
+    for s in subjects:
+        if not s.display_order or s.display_order <= 0:
+            s.display_order = next_order
+            s.save(update_fields=["display_order"])
+            changed = True
+        next_order += 1
+    return changed
+
+
+def _latest_result_map_for_student(student, module):
+    rows = {}
+    subjects = Subject.objects.filter(module=module, is_active=True)
+    for s in subjects:
+        upload = (
+            ResultUpload.objects.filter(module=module, subject=s)
+            .order_by("-uploaded_at")
+            .first()
+        )
+        if not upload:
+            rows[s.id] = None
+            continue
+        rows[s.id] = StudentResult.objects.filter(upload=upload, student=student).first()
+    return rows
+
+
+def _fmt_mark(v):
+    if v is None:
+        return "-"
+    try:
+        if float(v).is_integer():
+            return str(int(v))
+        return str(round(float(v), 2))
+    except Exception:
+        return str(v)
+
+
+def _sif_marks_rows_for_student(student, module):
+    subjects = ordered_subjects(module)
+    practical_map = {
+        pm.subject_id: pm
+        for pm in StudentPracticalMark.objects.filter(module=module, student=student).select_related("subject")
+    }
+    result_map = _latest_result_map_for_student(student, module)
+
+    rows = []
+    for s in subjects:
+        practical = practical_map.get(s.id)
+        sr = result_map.get(s.id)
+        attendance_val = _fmt_mark(practical.attendance_percentage) if practical and practical.attendance_percentage is not None else "-"
+        short = (s.short_name or s.name).strip()
+        t1 = sr.marks_t1 if sr and sr.marks_t1 is not None else (sr.marks_current if sr and sr.upload.test_name == "T1" else None)
+        t2 = sr.marks_t2 if sr and sr.marks_t2 is not None else (sr.marks_current if sr and sr.upload.test_name == "T2" else None)
+        t3 = sr.marks_t3 if sr and sr.marks_t3 is not None else (sr.marks_current if sr and sr.upload.test_name == "T3" else None)
+        t4 = sr.marks_t4 if sr and sr.marks_t4 is not None else (sr.marks_current if sr and sr.upload.test_name == "T4" else None)
+        total = sr.marks_total if sr else None
+        rows.append(
+            {
+                "label": f"{short}-TH",
+                "t1": _fmt_mark(t1),
+                "t2": _fmt_mark(t2),
+                "t3": _fmt_mark(t3),
+                "t4": _fmt_mark(t4),
+                "total": _fmt_mark(total),
+                "attendance": attendance_val,
+            }
+        )
+        rows.append(
+            {
+                "label": f"{short}-PR",
+                "t1": "-",
+                "t2": "-",
+                "t3": "-",
+                "t4": "-",
+                "total": _fmt_mark(practical.pr_marks) if practical and practical.pr_marks is not None else "-",
+                "attendance": attendance_val,
+            }
+        )
+    return rows
 
 
 def _result_report_text(test_name, subject_name, mentor_name, total, received, not_received, message_done):
@@ -742,6 +830,115 @@ def view_results(request):
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
+def view_practical_marks(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+    module = _active_module(request)
+    msg = ""
+    if request.method == "POST":
+        try:
+            f = request.FILES.get("practical_file")
+            if not f:
+                raise Exception("Please select practical marks file.")
+            summary = import_practical_marks(f, module=module, uploaded_by=request.user.username)
+            msg = (
+                f"Uploaded practical marks ({summary.get('mode','-')} mode). "
+                f"Rows: {summary['rows_total']}, matched: {summary['rows_matched']}."
+            )
+        except Exception as exc:
+            msg = f"Upload failed: {exc}"
+
+    subjects = ordered_subjects(module)
+    students = list(Student.objects.filter(module=module).select_related("mentor").order_by("roll_no", "name"))
+    marks_qs = StudentPracticalMark.objects.filter(module=module).select_related("subject", "student")
+    mark_map = {(m.student_id, m.subject_id): m for m in marks_qs}
+    rows = []
+    for s in students:
+        row = {"student": s, "cells": []}
+        for subj in subjects:
+            pm = mark_map.get((s.id, subj.id))
+            pr = _fmt_mark(pm.pr_marks) if pm and pm.pr_marks is not None else "-"
+            att = _fmt_mark(pm.attendance_percentage) if pm and pm.attendance_percentage is not None else "-"
+            row["cells"].append({"subject": subj, "pr": pr, "att": att})
+        rows.append(row)
+
+    latest_upload = PracticalMarkUpload.objects.filter(module=module).order_by("-uploaded_at").first()
+    return render(
+        request,
+        "view_practical_marks.html",
+        {
+            "message": msg,
+            "subjects": subjects,
+            "rows": rows,
+            "latest_upload": latest_upload,
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def sif_marks_template(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+    module = _active_module(request)
+    _ensure_subject_display_order(module)
+    students = list(Student.objects.filter(module=module).select_related("mentor").order_by("roll_no", "name"))
+    selected_enrollment = request.GET.get("enrollment") or (students[0].enrollment if students else "")
+    selected_student = Student.objects.filter(module=module, enrollment=selected_enrollment).first() if selected_enrollment else None
+
+    lock_obj, _ = SifMarksLock.objects.get_or_create(module=module)
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        if action == "lock":
+            lock_obj.locked = True
+            lock_obj.locked_by = request.user.username
+            lock_obj.locked_at = timezone.now()
+            lock_obj.save(update_fields=["locked", "locked_by", "locked_at"])
+            messages.success(request, "SIF marks view locked.")
+        elif action == "unlock":
+            lock_obj.locked = False
+            lock_obj.save(update_fields=["locked"])
+            messages.success(request, "SIF marks view unlocked.")
+        elif action in {"move_up", "move_down"}:
+            if lock_obj.locked:
+                messages.error(request, "Unlock first to change sequence.")
+            else:
+                sid = request.POST.get("subject_id")
+                subj = Subject.objects.filter(module=module, id=sid, is_active=True).first()
+                if subj:
+                    subjects = ordered_subjects(module)
+                    ids = [s.id for s in subjects]
+                    try:
+                        idx = ids.index(subj.id)
+                    except ValueError:
+                        idx = -1
+                    if idx >= 0:
+                        swap_idx = idx - 1 if action == "move_up" else idx + 1
+                        if 0 <= swap_idx < len(subjects):
+                            a = subjects[idx]
+                            b = subjects[swap_idx]
+                            a.display_order, b.display_order = b.display_order, a.display_order
+                            a.save(update_fields=["display_order"])
+                            b.save(update_fields=["display_order"])
+        return redirect(f"/sif-marks-template/?enrollment={selected_enrollment}")
+
+    marks_rows = _sif_marks_rows_for_student(selected_student, module) if selected_student else []
+    return render(
+        request,
+        "sif_marks_template.html",
+        {
+            "students": students,
+            "selected_student": selected_student,
+            "selected_enrollment": selected_enrollment,
+            "marks_rows": marks_rows,
+            "lock_obj": lock_obj,
+            "subjects_ordered": ordered_subjects(module),
+        },
+    )
+
+
+@login_required
 def subjects_page(request):
     if "mentor" in request.session:
         return redirect("/mentor-dashboard/")
@@ -764,16 +961,31 @@ def add_subject(request):
         return redirect("/mentor-dashboard/")
     module = _active_module(request)
     name = (request.POST.get("name") or "").strip()
+    short_name = (request.POST.get("short_name") or "").strip()
     result_format = (request.POST.get("result_format") or Subject.FORMAT_FULL).strip()
+    has_theory = bool(request.POST.get("has_theory"))
+    has_practical = bool(request.POST.get("has_practical"))
     if not name:
         messages.error(request, "Subject name is required.")
         return redirect("/subjects/")
+    if not short_name:
+        short_name = name
+    if not has_theory:
+        # PR-only subject does not use theory cycle format selection.
+        result_format = Subject.FORMAT_FULL
     if result_format not in {Subject.FORMAT_FULL, Subject.FORMAT_T4_ONLY}:
         result_format = Subject.FORMAT_FULL
     Subject.objects.get_or_create(
         module=module,
         name=name,
-        defaults={"is_active": True, "result_format": result_format},
+        defaults={
+            "is_active": True,
+            "result_format": result_format,
+            "short_name": short_name,
+            "display_order": (Subject.objects.filter(module=module).aggregate(mx=Max("display_order")).get("mx") or 0) + 1,
+            "has_theory": has_theory,
+            "has_practical": has_practical,
+        },
     )
     messages.success(request, "Subject saved.")
     return redirect("/subjects/")
@@ -786,17 +998,25 @@ def edit_subject(request, subject_id):
         return redirect("/mentor-dashboard/")
     module = _active_module(request)
     name = (request.POST.get("name") or "").strip()
+    short_name = (request.POST.get("short_name") or "").strip()
     result_format = (request.POST.get("result_format") or Subject.FORMAT_FULL).strip()
+    has_theory = bool(request.POST.get("has_theory"))
+    has_practical = bool(request.POST.get("has_practical"))
     if not name:
         messages.error(request, "Subject name is required.")
         return redirect("/subjects/")
     subject = Subject.objects.filter(id=subject_id, module=module).first()
     if subject:
         subject.name = name
+        subject.short_name = short_name or name
+        if not has_theory:
+            result_format = Subject.FORMAT_FULL
         if result_format not in {Subject.FORMAT_FULL, Subject.FORMAT_T4_ONLY}:
             result_format = Subject.FORMAT_FULL
         subject.result_format = result_format
-        subject.save(update_fields=["name", "result_format"])
+        subject.has_theory = has_theory
+        subject.has_practical = has_practical
+        subject.save(update_fields=["name", "short_name", "result_format", "has_theory", "has_practical"])
         messages.success(request, "Subject updated.")
     return redirect("/subjects/")
 
@@ -1700,6 +1920,80 @@ def mentor_print_sif(request):
             "students": students,
         },
     )
+
+
+def mentor_sif_marks(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+    module = _active_module(request)
+    lock_obj = SifMarksLock.objects.filter(module=module).first()
+    if not lock_obj or not lock_obj.locked:
+        return render(request, "mentor_sif_marks.html", {"locked": False})
+
+    students = list(
+        Student.objects.select_related("mentor")
+        .filter(module=module, mentor=mentor)
+        .order_by("roll_no", "name")
+    )
+    selected_enrollment = request.GET.get("enrollment") or (students[0].enrollment if students else "")
+    selected_student = Student.objects.filter(module=module, mentor=mentor, enrollment=selected_enrollment).first() if selected_enrollment else None
+    marks_rows = _sif_marks_rows_for_student(selected_student, module) if selected_student else []
+    return render(
+        request,
+        "mentor_sif_marks.html",
+        {
+            "locked": True,
+            "students": students,
+            "selected_student": selected_student,
+            "selected_enrollment": selected_enrollment,
+            "marks_rows": marks_rows,
+        },
+    )
+
+
+def mentor_sif_marks_pdf(request, enrollment):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+    module = _active_module(request)
+    lock_obj = SifMarksLock.objects.filter(module=module).first()
+    if not lock_obj or not lock_obj.locked:
+        return HttpResponse("Marks not yet locked.", status=403)
+    student = Student.objects.filter(module=module, mentor=mentor, enrollment=enrollment).first()
+    if not student:
+        return HttpResponse("Unauthorized", status=403)
+    response = HttpResponse(content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{_safe_pdf_name(student.name)}_SIF.pdf"'
+    generate_student_pdf(response, student)
+    return response
+
+
+def mentor_sif_marks_pdf_all(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+    module = _active_module(request)
+    lock_obj = SifMarksLock.objects.filter(module=module).first()
+    if not lock_obj or not lock_obj.locked:
+        return HttpResponse("Marks not yet locked.", status=403)
+
+    students = list(
+        Student.objects.select_related("mentor")
+        .filter(module=module, mentor=mentor)
+        .order_by("roll_no", "name")
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for s in students:
+            pdf_bytes = io.BytesIO()
+            generate_student_pdf(pdf_bytes, s)
+            roll = s.roll_no if s.roll_no is not None else "NA"
+            zf.writestr(f"{roll}_{_safe_pdf_name(s.name)}_SIF.pdf", pdf_bytes.getvalue())
+
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = f'attachment; filename="{_safe_pdf_name(mentor.name)}_SIF_Marks.zip"'
+    return response
 
 
 # ---------------- MODULE SWITCH ----------------

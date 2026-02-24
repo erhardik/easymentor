@@ -179,6 +179,10 @@ class Subject(models.Model):
 
     module = models.ForeignKey(AcademicModule, on_delete=models.CASCADE, related_name="subjects")
     name = models.CharField(max_length=100)
+    short_name = models.CharField(max_length=30, blank=True)
+    display_order = models.IntegerField(default=0)
+    has_theory = models.BooleanField(default=True)
+    has_practical = models.BooleanField(default=True)
     result_format = models.CharField(max_length=20, choices=FORMAT_CHOICES, default=FORMAT_FULL)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -189,6 +193,46 @@ class Subject(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class PracticalMarkUpload(models.Model):
+    module = models.ForeignKey(AcademicModule, on_delete=models.CASCADE, related_name="practical_mark_uploads")
+    uploaded_by = models.CharField(max_length=100, blank=True)
+    uploaded_at = models.DateTimeField(auto_now=True)
+    rows_total = models.IntegerField(default=0)
+    rows_matched = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+
+    def __str__(self):
+        return f"Practical Upload {self.uploaded_at:%Y-%m-%d %H:%M}"
+
+
+class StudentPracticalMark(models.Model):
+    module = models.ForeignKey(AcademicModule, on_delete=models.CASCADE, related_name="student_practical_marks")
+    upload = models.ForeignKey(PracticalMarkUpload, on_delete=models.CASCADE, related_name="rows")
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="practical_marks")
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name="practical_marks")
+    pr_marks = models.FloatField(null=True, blank=True)
+    attendance_percentage = models.FloatField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("module", "student", "subject")
+        ordering = ["student__roll_no", "student__name", "subject__name"]
+
+    def __str__(self):
+        return f"{self.student.enrollment} - {self.subject.name}"
+
+
+class SifMarksLock(models.Model):
+    module = models.OneToOneField(AcademicModule, on_delete=models.CASCADE, related_name="sif_marks_lock")
+    locked = models.BooleanField(default=False)
+    locked_by = models.CharField(max_length=100, blank=True)
+    locked_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"SIF Marks Lock ({self.module.name}) = {self.locked}"
 
 
 class ResultUpload(models.Model):
