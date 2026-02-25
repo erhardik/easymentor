@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from django.contrib.auth.models import User
 
 
 class AcademicModule(models.Model):
@@ -193,6 +194,19 @@ class Subject(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class CoordinatorModuleAccess(models.Model):
+    coordinator = models.ForeignKey(User, on_delete=models.CASCADE, related_name="module_accesses")
+    module = models.ForeignKey(AcademicModule, on_delete=models.CASCADE, related_name="coordinator_accesses")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("coordinator", "module")
+        ordering = ["coordinator__username", "module__name"]
+
+    def __str__(self):
+        return f"{self.coordinator.username} -> {self.module.name}"
 
 
 class PracticalMarkUpload(models.Model):

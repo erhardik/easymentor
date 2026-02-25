@@ -1,6 +1,9 @@
 from .models import AcademicModule
 
 
+SUPERADMIN_USERNAMES = {"superadmin1", "superadmin2"}
+
+
 DEFAULT_MODULE_NAME = "FY2 - Batch 2026-29_Sem-1"
 
 
@@ -18,15 +21,44 @@ def get_or_create_default_module():
     return module
 
 
+def is_superadmin_user(user):
+    return bool(user and user.is_authenticated and user.username.lower() in SUPERADMIN_USERNAMES)
+
+
+def allowed_modules_for_user(request):
+    # Mentor session keeps current behavior; data remains student-scoped by mentor in views.
+    if request.session.get("mentor"):
+        return AcademicModule.objects.filter(is_active=True).order_by("-id")
+
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated:
+        return AcademicModule.objects.none()
+
+    if is_superadmin_user(user):
+        return AcademicModule.objects.filter(is_active=True).order_by("-id")
+
+    return (
+        AcademicModule.objects.filter(is_active=True, coordinator_accesses__coordinator=user)
+        .distinct()
+        .order_by("-id")
+    )
+
+
 def get_current_module(request):
+    allowed_qs = allowed_modules_for_user(request)
     module_id = request.session.get("current_module_id")
     module = None
+
     if module_id:
-        module = AcademicModule.objects.filter(id=module_id, is_active=True).first()
+        module = allowed_qs.filter(id=module_id).first()
+
     if not module:
-        module = AcademicModule.objects.filter(is_active=True).order_by("-id").first()
-    if not module:
+        module = allowed_qs.first()
+
+    if not module and getattr(request, "user", None) and is_superadmin_user(request.user):
         module = get_or_create_default_module()
-    request.session["current_module_id"] = module.id
+
+    if module:
+        request.session["current_module_id"] = module.id
     return module
 

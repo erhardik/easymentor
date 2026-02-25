@@ -19,6 +19,7 @@
         body {
             background: #f5f7fb;
             padding-top: env(safe-area-inset-top);
+            color: #111827;
         }
 
         /* Keep classic LJ header + sidebar look even if static CSS cache misses */
@@ -47,6 +48,152 @@
         .lj-sidebar a:hover {
             background: #0b3d6d;
             color: #ffffff;
+        }
+
+        .logout-btn {
+            background: #b91c1c;
+            border-color: #b91c1c;
+            color: #fff !important;
+        }
+        .logout-btn:hover {
+            background: #991b1b;
+            border-color: #991b1b;
+            color: #fff !important;
+        }
+
+        .theme-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            user-select: none;
+        }
+        .theme-icon {
+            font-size: 14px;
+            line-height: 1;
+        }
+        .theme-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        .theme-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .theme-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #cbd5e1;
+            transition: .2s;
+            border-radius: 999px;
+        }
+        .theme-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            top: 3px;
+            background-color: white;
+            transition: .2s;
+            border-radius: 50%;
+        }
+        .theme-switch input:checked + .theme-slider {
+            background-color: #2563eb;
+        }
+        .theme-switch input:checked + .theme-slider:before {
+            transform: translateX(20px);
+        }
+
+        body.dark-mode {
+            background: #0b1220;
+            color: #e5e7eb;
+        }
+        body.dark-mode .lj-navbar {
+            background: linear-gradient(90deg, #020617, #0f172a);
+            border-bottom: 1px solid #334155;
+            box-shadow: 0 2px 0 rgba(30, 41, 59, 0.7);
+        }
+        body.dark-mode .lj-card,
+        body.dark-mode .card {
+            background: #111827 !important;
+            color: #e5e7eb !important;
+            border-color: #334155 !important;
+        }
+        body.dark-mode .lj-sidebar {
+            background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+            border-right: 2px solid #334155;
+            box-shadow: inset -1px 0 0 #1f2937;
+        }
+        body.dark-mode .lj-sidebar h6 {
+            color: #93c5fd !important;
+        }
+        body.dark-mode .menu-group {
+            background: #1e293b;
+            color: #bfdbfe;
+        }
+        body.dark-mode .lj-sidebar a {
+            color: #dbeafe;
+        }
+        body.dark-mode .lj-sidebar a:hover {
+            background: #1d4ed8;
+            color: #ffffff;
+        }
+        body.dark-mode .table,
+        body.dark-mode .table-sm,
+        body.dark-mode .table-bordered {
+            --bs-table-bg: #0f172a;
+            --bs-table-color: #e5e7eb;
+            --bs-table-border-color: #334155;
+            --bs-table-accent-bg: #0f172a;
+            --bs-table-striped-bg: #111827;
+            --bs-table-striped-color: #e5e7eb;
+            --bs-table-hover-bg: #1e293b;
+            --bs-table-hover-color: #ffffff;
+            color: #e5e7eb;
+        }
+        body.dark-mode .table thead th {
+            background: #1e293b;
+            color: #e2e8f0;
+            border-color: #334155;
+        }
+        body.dark-mode .table td,
+        body.dark-mode .table th {
+            border-color: #334155;
+        }
+        body.dark-mode .form-control,
+        body.dark-mode .form-select {
+            background: #0f172a;
+            color: #e5e7eb;
+            border-color: #334155;
+        }
+        body.dark-mode .form-control::placeholder {
+            color: #94a3b8;
+        }
+        body.dark-mode .theme-slider {
+            background-color: #334155;
+        }
+        body.dark-mode .theme-switch input:checked + .theme-slider {
+            background-color: #3b82f6;
+        }
+        body.dark-mode .alert-info {
+            background: #10243f;
+            color: #dbeafe;
+            border-color: #1e3a5f;
+        }
+        body.dark-mode .alert-warning {
+            background: #3a2a06;
+            color: #fde68a;
+            border-color: #7c5f13;
+        }
+        body.dark-mode .badge.bg-secondary {
+            background-color: #334155 !important;
         }
 
         .lj-sidebar h6 {
@@ -111,16 +258,22 @@
         }
 
         .menu-group {
-            margin-top: 12px;
-            margin-bottom: 8px;
-            padding: 6px 10px;
+            margin-top: 8px;
+            margin-bottom: 4px;
+            padding: 4px 8px;
             border-radius: 7px;
             background: #d6e4ff;
             color: #173a70;
-            font-size: 0.72rem;
+            font-size: 0.7rem;
             font-weight: 700;
             letter-spacing: 0.04em;
             text-transform: uppercase;
+        }
+
+        .lj-sidebar a.d-block.mb-2 {
+            margin-bottom: 2px !important;
+            padding-top: 4px;
+            padding-bottom: 4px;
         }
 
         .mobile-view {
@@ -328,11 +481,14 @@
 <body>
 
     <nav class="lj-navbar d-flex align-items-center">
-        <img src="{% static 'logo.png' %}" class="lj-logo">
-        <div class="ms-2 brand-block">
-            <strong>L.J. Institute of Engineering & Technology</strong><br>
-            <small>Attendance Follow-up ERP</small>
-        </div>
+        <a href="{{ home_url }}"
+            class="d-flex align-items-center text-decoration-none text-white">
+            <img src="{% static 'logo.png' %}" class="lj-logo">
+            <div class="ms-2 brand-block">
+                <strong>L.J. Institute of Engineering & Technology</strong><br>
+                <small>Attendance Follow-up ERP</small>
+            </div>
+        </a>
 
         <div class="ms-auto d-flex gap-2 align-items-center top-actions">
             {% if current_module and module_list %}
@@ -353,7 +509,15 @@
             {% endif %}
 
             <button class="btn btn-light btn-sm mobile-menu" onclick="toggleMenu()">Menu</button>
-            <a href="/" class="btn btn-light btn-sm">Logout</a>
+            <div class="theme-toggle" title="Light / Dark mode">
+                <span class="theme-icon">☀</span>
+                <label class="theme-switch mb-0">
+                    <input type="checkbox" id="themeSwitch" onchange="toggleTheme()">
+                    <span class="theme-slider"></span>
+                </label>
+                <span class="theme-icon">🌙</span>
+            </div>
+            <a href="/" class="btn btn-sm logout-btn">Logout</a>
         </div>
     </nav>
     <div class="mobile-backdrop" id="mobileBackdrop" onclick="closeMenu()"></div>
@@ -365,6 +529,8 @@
                 <h6 class="text-muted">MENU</h6>
 
                 {% if request.session.mentor %}
+                <a href="/home/" class="menu-group d-block text-decoration-none">Home</a>
+
                 <div class="menu-group">Calls</div>
                 <a href="/mentor-dashboard/" class="d-block mb-2">Attendance Calls</a>
                 <a href="/mentor-result-calls/" class="d-block mb-2">Result Calls</a>
@@ -379,6 +545,8 @@
                 <a href="/mentor-result-report/" class="d-block mb-2">Result Report</a>
                 <a href="/mentor-whatsapp/" class="d-block mb-2">Message to Mentees</a>
                 {% else %}
+                <a href="/home/" class="menu-group d-block text-decoration-none">Home</a>
+
                 <div class="menu-group">Attendance</div>
                 <a href="/view-attendance/" class="d-block mb-2">View Attendance</a>
                 <a href="/upload-attendance/" class="d-block mb-2">Upload Attendance</a>
@@ -430,6 +598,29 @@
     </div>
 
     <script>
+        function applyTheme(mode) {
+            const sw = document.getElementById("themeSwitch");
+            if (mode === "dark") {
+                document.body.classList.add("dark-mode");
+                if (sw) sw.checked = true;
+            } else {
+                document.body.classList.remove("dark-mode");
+                if (sw) sw.checked = false;
+            }
+        }
+
+        function toggleTheme() {
+            const current = localStorage.getItem("theme_mode") || "light";
+            const next = current === "dark" ? "light" : "dark";
+            localStorage.setItem("theme_mode", next);
+            applyTheme(next);
+        }
+
+        (function initTheme(){
+            const saved = localStorage.getItem("theme_mode") || "light";
+            applyTheme(saved);
+        })();
+
         function toggleMenu() {
             document.body.classList.toggle("menu-open");
         }

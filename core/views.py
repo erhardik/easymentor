@@ -11,6 +11,8 @@ from django.conf import settings
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth import authenticate, login
+from django.contrib.auth import update_session_auth_hash
+from django.contrib.auth.models import User
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 from django.db import close_old_connections
@@ -30,6 +32,7 @@ from .models import (
     AcademicModule,
     Attendance,
     CallRecord,
+    CoordinatorModuleAccess,
     Mentor,
     OtherCallRecord,
     PracticalMarkUpload,
@@ -50,7 +53,7 @@ from .attendance_utils import import_attendance
 from .result_utils import import_compiled_bulk_all, import_compiled_result_sheet, import_result_sheet
 from .practical_utils import import_practical_marks, ordered_subjects
 from .pdf_report import generate_student_pdf, generate_student_prefilled_pdf
-from .module_utils import get_current_module
+from .module_utils import allowed_modules_for_user, get_current_module, is_superadmin_user
 
 TEST_NAMES = ["T1", "T2", "T3", "T4", "REMEDIAL"]
 
@@ -65,6 +68,14 @@ def _session_mentor_obj(request):
 
 def _active_module(request):
     return get_current_module(request)
+
+
+def _require_superadmin(request):
+    if not request.user.is_authenticated or request.session.get("mentor"):
+        return JsonResponse({"ok": False, "msg": "Unauthorized"}, status=401)
+    if not is_superadmin_user(request.user):
+        return JsonResponse({"ok": False, "msg": "SuperAdmin only"}, status=403)
+    return None
 
 
 def _normalize_whatsapp_phone(number):
@@ -288,12 +299,15 @@ def login_page(request):
             login(request, user)
             request.session.pop("mentor", None)
             _active_module(request)
+            if is_superadmin_user(user):
+                return redirect("/home/")
             return redirect("/reports/")
 
-        # mentor login
-        if password == "mentor@LJ123":
-            mentor = resolve_mentor_identity(username)
-            if mentor:
+        # mentor login: password is "<mentor_short_name>@LJ123"
+        mentor = resolve_mentor_identity(username)
+        if mentor:
+            expected = f"{(mentor.name or '').strip().lower()}@LJ123".lower()
+            if (password or "").strip().lower() == expected:
                 request.session["mentor"] = mentor.name
                 _active_module(request)
                 return redirect("/mentor-dashboard/")
@@ -301,6 +315,170 @@ def login_page(request):
         error = "Invalid username or password"
 
     return render(request, "login.html", {"error": error})
+
+
+@login_required
+def superadmin_home(request):
+    if request.session.get("mentor"):
+        return redirect("/mentor-dashboard/")
+    if not is_superadmin_user(request.user):
+        return redirect("/reports/")
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        if action == "create":
+            coordinator_name = (request.POST.get("coordinator_name") or "").strip()
+            username = (request.POST.get("username") or "").strip()
+            password = (request.POST.get("password") or "").strip()
+            module_ids = request.POST.getlist("module_ids")
+            if not coordinator_name or not username or not password:
+                messages.error(request, "Coordinator name, username and password are required.")
+            elif User.objects.filter(username__iexact=username).exists():
+                messages.error(request, "Coordinator username already exists.")
+            else:
+                coordinator = User.objects.create_user(
+                    username=username,
+                    password=password,
+                    first_name=coordinator_name,
+                    is_active=True,
+                    is_staff=False,
+                    is_superuser=False,
+                )
+                modules = list(AcademicModule.objects.filter(id__in=module_ids, is_active=True))
+                if not modules:
+                    coordinator.delete()
+                    messages.error(request, "Select at least one module.")
+                else:
+                    CoordinatorModuleAccess.objects.bulk_create(
+                        [CoordinatorModuleAccess(coordinator=coordinator, module=m) for m in modules],
+                        ignore_conflicts=True,
+                    )
+                    messages.success(request, f"Coordinator created: {coordinator.username}")
+
+        elif action == "update":
+            coord_id = request.POST.get("coordinator_id")
+            username = (request.POST.get("username") or "").strip()
+            coordinator_name = (request.POST.get("coordinator_name") or "").strip()
+            new_password = (request.POST.get("new_password") or "").strip()
+            module_ids = request.POST.getlist("module_ids")
+            active_val = (request.POST.get("is_active") or "").strip() == "1"
+            coordinator = User.objects.filter(id=coord_id, is_superuser=False).first()
+            if not coordinator:
+                messages.error(request, "Coordinator not found.")
+            else:
+                if not username:
+                    messages.error(request, "Username is required.")
+                    return redirect("/home/")
+                username_exists = User.objects.filter(username__iexact=username).exclude(id=coordinator.id).exists()
+                if username_exists:
+                    messages.error(request, "Username already exists.")
+                    return redirect("/home/")
+                modules = list(AcademicModule.objects.filter(id__in=module_ids, is_active=True))
+                if not modules:
+                    messages.error(request, "Select at least one module.")
+                    return redirect("/home/")
+                coordinator.username = username
+                coordinator.first_name = coordinator_name
+                coordinator.is_active = active_val
+                if new_password:
+                    coordinator.set_password(new_password)
+                coordinator.save()
+                CoordinatorModuleAccess.objects.filter(coordinator=coordinator).delete()
+                CoordinatorModuleAccess.objects.bulk_create(
+                    [CoordinatorModuleAccess(coordinator=coordinator, module=m) for m in modules],
+                    ignore_conflicts=True,
+                )
+                messages.success(request, f"Coordinator updated: {coordinator.username}")
+
+        elif action == "delete":
+            coord_id = request.POST.get("coordinator_id")
+            coordinator = User.objects.filter(id=coord_id, is_superuser=False).first()
+            if not coordinator:
+                messages.error(request, "Coordinator not found.")
+            else:
+                CoordinatorModuleAccess.objects.filter(coordinator=coordinator).delete()
+                coordinator.delete()
+                messages.success(request, "Coordinator deleted.")
+        elif action == "change_super_password":
+            current_password = (request.POST.get("current_password") or "").strip()
+            new_password = (request.POST.get("new_password") or "").strip()
+            if not request.user.check_password(current_password):
+                messages.error(request, "Current password is incorrect.")
+            elif len(new_password) < 8:
+                messages.error(request, "New password must be at least 8 characters.")
+            else:
+                request.user.set_password(new_password)
+                request.user.save(update_fields=["password"])
+                update_session_auth_hash(request, request.user)
+                messages.success(request, "Password updated.")
+
+        return redirect("/home/")
+
+    modules = list(AcademicModule.objects.filter(is_active=True).order_by("-id"))
+    coordinators = User.objects.filter(is_superuser=False).order_by("username")
+    coordinator_rows = []
+    for c in coordinators:
+        mapped = list(
+            AcademicModule.objects.filter(coordinator_accesses__coordinator=c, is_active=True)
+            .distinct()
+            .order_by("-id")
+        )
+        coordinator_rows.append({"user": c, "modules": mapped})
+
+    stats = {
+        "total_coordinators": len(coordinator_rows),
+        "total_modules": AcademicModule.objects.filter(is_active=True).count(),
+        "total_mentors": Mentor.objects.count(),
+        "total_students": Student.objects.count(),
+    }
+
+    module_summary = []
+    for m in modules:
+        student_qs = Student.objects.filter(module=m)
+        module_summary.append(
+            {
+                "module": m,
+                "students": student_qs.count(),
+                "mentors": Mentor.objects.filter(student__module=m).distinct().count(),
+                "coordinators": User.objects.filter(is_superuser=False, module_accesses__module=m).distinct().count(),
+            }
+        )
+
+    mentor_summary = (
+        Mentor.objects.annotate(
+            total_students=Count("student", distinct=True),
+            total_modules=Count("student__module", distinct=True),
+        )
+        .filter(total_students__gt=0)
+        .order_by("name")
+    )
+
+    student_report_rows = []
+    for m in modules:
+        student_qs = Student.objects.filter(module=m)
+        student_report_rows.append(
+            {
+                "module_name": m.name,
+                "students": student_qs.count(),
+                "mentors": Mentor.objects.filter(student__module=m).distinct().count(),
+                "attendance_rows": Attendance.objects.filter(student__module=m).count(),
+                "result_uploads": ResultUpload.objects.filter(module=m).count(),
+                "practical_uploads": PracticalMarkUpload.objects.filter(module=m).count(),
+            }
+        )
+
+    return render(
+        request,
+        "home.html",
+        {
+            "modules": modules,
+            "coordinator_rows": coordinator_rows,
+            "stats": stats,
+            "module_summary": module_summary,
+            "mentor_summary": mentor_summary,
+            "student_report_rows": student_report_rows,
+        },
+    )
 
 
 # ---------------- STUDENT MASTER ----------------
@@ -2099,13 +2277,94 @@ def mentor_sif_marks_pdf_all(request):
     return response
 
 
+@login_required
+@require_http_methods(["POST"])
+def rbac_create_coordinator(request):
+    guard = _require_superadmin(request)
+    if guard:
+        return guard
+
+    username = (request.POST.get("username") or "").strip()
+    password = request.POST.get("password") or ""
+    module_ids_raw = (request.POST.get("module_ids") or "").strip()
+
+    if not username or not password:
+        return JsonResponse({"ok": False, "msg": "username and password required"}, status=400)
+    if User.objects.filter(username__iexact=username).exists():
+        return JsonResponse({"ok": False, "msg": "username already exists"}, status=400)
+
+    module_ids = [x.strip() for x in module_ids_raw.split(",") if x.strip().isdigit()]
+    modules = list(AcademicModule.objects.filter(id__in=module_ids, is_active=True)) if module_ids else []
+    if not modules:
+        return JsonResponse({"ok": False, "msg": "at least one valid module is required"}, status=400)
+
+    user = User.objects.create_user(username=username, password=password, is_active=True, is_staff=False, is_superuser=False)
+    CoordinatorModuleAccess.objects.bulk_create(
+        [CoordinatorModuleAccess(coordinator=user, module=m) for m in modules],
+        ignore_conflicts=True,
+    )
+    return JsonResponse({"ok": True, "coordinator_id": user.id, "modules": [m.id for m in modules]})
+
+
+@login_required
+@require_http_methods(["POST"])
+def rbac_update_coordinator_modules(request):
+    guard = _require_superadmin(request)
+    if guard:
+        return guard
+
+    coordinator_id = request.POST.get("coordinator_id")
+    module_ids_raw = (request.POST.get("module_ids") or "").strip()
+    if not str(coordinator_id or "").isdigit():
+        return JsonResponse({"ok": False, "msg": "valid coordinator_id required"}, status=400)
+
+    coordinator = User.objects.filter(id=int(coordinator_id)).first()
+    if not coordinator:
+        return JsonResponse({"ok": False, "msg": "coordinator not found"}, status=404)
+    if is_superadmin_user(coordinator):
+        return JsonResponse({"ok": False, "msg": "cannot remap superadmin"}, status=400)
+
+    module_ids = [x.strip() for x in module_ids_raw.split(",") if x.strip().isdigit()]
+    modules = list(AcademicModule.objects.filter(id__in=module_ids, is_active=True)) if module_ids else []
+    if not modules:
+        return JsonResponse({"ok": False, "msg": "at least one valid module is required"}, status=400)
+
+    CoordinatorModuleAccess.objects.filter(coordinator=coordinator).delete()
+    CoordinatorModuleAccess.objects.bulk_create(
+        [CoordinatorModuleAccess(coordinator=coordinator, module=m) for m in modules],
+        ignore_conflicts=True,
+    )
+    return JsonResponse({"ok": True, "coordinator_id": coordinator.id, "modules": [m.id for m in modules]})
+
+
+@login_required
+@require_http_methods(["POST"])
+def superadmin_change_password(request):
+    guard = _require_superadmin(request)
+    if guard:
+        return guard
+
+    current_password = request.POST.get("current_password") or ""
+    new_password = request.POST.get("new_password") or ""
+    if not request.user.check_password(current_password):
+        return JsonResponse({"ok": False, "msg": "current password is incorrect"}, status=400)
+    if len(new_password) < 8:
+        return JsonResponse({"ok": False, "msg": "new password must be at least 8 chars"}, status=400)
+
+    request.user.set_password(new_password)
+    request.user.save(update_fields=["password"])
+    update_session_auth_hash(request, request.user)
+    return JsonResponse({"ok": True})
+
+
 # ---------------- MODULE SWITCH ----------------
 @require_http_methods(["POST"])
 def switch_module(request):
     if not request.user.is_authenticated and "mentor" not in request.session:
         return redirect("/")
     module_id = request.POST.get("module_id")
-    module = AcademicModule.objects.filter(id=module_id, is_active=True).first()
+    allowed_qs = allowed_modules_for_user(request)
+    module = allowed_qs.filter(id=module_id).first()
     if module:
         request.session["current_module_id"] = module.id
     next_url = request.POST.get("next") or request.META.get("HTTP_REFERER") or "/reports/"
@@ -2116,6 +2375,8 @@ def switch_module(request):
 def manage_modules(request):
     if "mentor" in request.session:
         return redirect("/mentor-dashboard/")
+    if not is_superadmin_user(request.user):
+        return HttpResponse("Forbidden", status=403)
 
     if request.method == "POST":
         batch = (request.POST.get("academic_batch") or "").strip()

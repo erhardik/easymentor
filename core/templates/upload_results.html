@@ -1,9 +1,37 @@
 {% extends "base.html" %}
 {% block content %}
 
+<style>
+body.dark-mode .upload-result-card,
+body.dark-mode .upload-result-card.card{
+    background: #0f172a !important;
+    border-color: #334155 !important;
+    color: #e5e7eb !important;
+}
+body.dark-mode #statusText .alert-success{
+    background: #0f2a1f;
+    color: #bbf7d0;
+    border-color: #166534;
+}
+body.dark-mode #statusText .alert-danger{
+    background: #2c1115;
+    color: #fecdd3;
+    border-color: #7f1d1d;
+}
+body.dark-mode #statusText .alert-warning{
+    background: #3a2a06;
+    color: #fde68a;
+    border-color: #7c5f13;
+}
+body.dark-mode #mentorStats .card{
+    background: #0f172a !important;
+    border: 1px solid #334155;
+}
+</style>
+
 <h3>Upload Result Sheet</h3>
 
-<form id="resultUploadForm" method="post" enctype="multipart/form-data">
+<form id="resultUploadForm" method="post" enctype="multipart/form-data" class="upload-result-card card p-3">
     {% csrf_token %}
 
     <label>Test Name</label>

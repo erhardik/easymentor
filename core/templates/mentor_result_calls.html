@@ -1,6 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
 
+<style>
+body.dark-mode .result-calls-table{
+    --bs-table-bg: #0f172a;
+    --bs-table-color: #e5e7eb;
+    --bs-table-border-color: #334155;
+    --bs-table-striped-bg: #111827;
+    --bs-table-hover-bg: #1e293b;
+    --bs-table-hover-color: #ffffff;
+}
+body.dark-mode .result-calls-table thead th{
+    background: #1e293b;
+    color: #e2e8f0;
+}
+body.dark-mode .result-calls-card.card{
+    background: #0f172a !important;
+    border-color: #334155 !important;
+    color: #e5e7eb !important;
+}
+body.dark-mode .modal-content{
+    background: #0f172a;
+    color: #e5e7eb;
+    border-color: #334155;
+}
+</style>
+
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h3 class="mb-0">Result Calls - {{mentor.name}}</h3>
     {% if selected_upload %}
@@ -24,7 +49,7 @@
 
 <div class="desktop-view">
 <div class="table-responsive">
-<table class="table table-bordered table-hover align-middle">
+<table class="table table-bordered table-hover align-middle result-calls-table">
 <thead class="table-dark text-center">
 <tr>
 <th>Roll</th>
@@ -78,7 +103,7 @@
 </div>
 
 {% if all_done and not_connected %}
-<div class="card p-3 mt-3 border-warning">
+<div class="card p-3 mt-3 border-warning result-calls-card">
     <h5>Retry List</h5>
     {% for c in not_connected %}
     <div class="border-top pt-2 mt-2">

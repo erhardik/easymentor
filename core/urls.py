@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     login_page,
+    superadmin_home,
     upload_students,
     upload_attendance,
     delete_week,
@@ -39,6 +40,9 @@ from .views import (
     mentor_sif_marks_pdf_all,
     switch_module,
     manage_modules,
+    rbac_create_coordinator,
+    rbac_update_coordinator_modules,
+    superadmin_change_password,
     save_result_call,
     save_other_call,
     mark_result_message,
@@ -65,6 +69,7 @@ from .mobile_api import (
 
 urlpatterns = [
     path('', login_page),
+    path('home/', superadmin_home),
     path('mentor-dashboard/', mentor_dashboard),
     path('upload-students/', upload_students),
     path('upload-attendance/', upload_attendance),
@@ -102,6 +107,9 @@ urlpatterns = [
     path("sif-marks-template/", sif_marks_template),
     path("switch-module/", switch_module),
     path("modules/", manage_modules),
+    path("rbac/create-coordinator/", rbac_create_coordinator),
+    path("rbac/update-coordinator-modules/", rbac_update_coordinator_modules),
+    path("rbac/superadmin-change-password/", superadmin_change_password),
     path("save-result-call/", save_result_call),
     path("save-other-call/", save_other_call),
     path("mark-result-message/", mark_result_message),

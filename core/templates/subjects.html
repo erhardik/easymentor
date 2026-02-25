@@ -5,9 +5,22 @@
 
 {% if messages %}
     {% for message in messages %}
+        {% if "coordinator created:" not in message|lower %}
         <div class="alert alert-info">{{ message }}</div>
+        {% endif %}
     {% endfor %}
 {% endif %}
+
+<style>
+.subject-table th,
+.subject-table td{
+    padding: 0.4rem 0.5rem;
+    font-size: 0.92rem;
+}
+.subject-table .compact-box{
+    padding: 0.3rem 0.45rem;
+}
+</style>
 
 <div class="card p-3 mb-3">
     <h5>Add Subject</h5>
@@ -46,15 +59,15 @@
 <div class="card p-3">
     <h5>Subject List</h5>
     <div class="table-responsive">
-        <table class="table table-bordered align-middle">
+        <table class="table table-bordered table-sm align-middle subject-table">
             <thead class="table-dark">
                 <tr>
-                    <th>Name</th>
-                    <th>Short</th>
+                    <th style="width:170px;">Name</th>
+                    <th style="width:90px;">Short</th>
                     <th>Status</th>
                     <th>TH/PR</th>
                     <th>Format</th>
-                    <th style="width:360px;">Actions</th>
+                    <th style="width:560px;">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -71,34 +84,40 @@
                     <td>
                         <form method="post" action="/subjects/{{s.id}}/edit/" class="d-flex gap-2 flex-wrap align-items-end">
                             {% csrf_token %}
-                            <input name="name" class="form-control form-control-sm" value="{{s.name}}" required style="max-width:220px;">
-                            <input name="short_name" class="form-control form-control-sm" value="{{s.short_name}}" required style="max-width:160px;">
-                            <div class="border rounded p-2">
-                                <div class="form-check">
+                            <input name="name" class="form-control form-control-sm" value="{{s.name}}" required style="max-width:170px;">
+                            <input name="short_name" class="form-control form-control-sm" value="{{s.short_name}}" required style="max-width:110px;">
+                            <div class="border rounded compact-box d-flex gap-2 align-items-center">
+                                <div class="form-check mb-0">
                                     <input class="form-check-input" type="checkbox" name="has_theory" id="has_theory_{{s.id}}" {% if s.has_theory %}checked{% endif %}>
                                     <label class="form-check-label" for="has_theory_{{s.id}}">TH</label>
                                 </div>
-                                <div class="form-check">
+                                <div class="form-check mb-0">
                                     <input class="form-check-input" type="checkbox" name="has_practical" id="has_practical_{{s.id}}" {% if s.has_practical %}checked{% endif %}>
                                     <label class="form-check-label" for="has_practical_{{s.id}}">PR</label>
                                 </div>
                             </div>
-                            <div id="edit-format-wrap-{{s.id}}">
-                                <div class="form-check">
+                            <div id="edit-format-wrap-{{s.id}}" class="d-flex gap-2 align-items-center compact-box border rounded">
+                                <div class="form-check mb-0">
                                     <input class="form-check-input" type="radio" name="result_format" id="fmt_full_{{s.id}}" value="{{format_full}}" {% if s.result_format != format_t4_only %}checked{% endif %}>
                                     <label class="form-check-label" for="fmt_full_{{s.id}}">T1/T2/T3/T4</label>
                                 </div>
-                                <div class="form-check">
+                                <div class="form-check mb-0">
                                     <input class="form-check-input" type="radio" name="result_format" id="fmt_t4_{{s.id}}" value="{{format_t4_only}}" {% if s.result_format == format_t4_only %}checked{% endif %}>
                                     <label class="form-check-label" for="fmt_t4_{{s.id}}">Only T4</label>
                                 </div>
                             </div>
                             <button class="btn btn-sm btn-primary">Update</button>
+                            {% if s.is_active %}
+                            <a href="#" class="btn btn-sm btn-outline-danger"
+                               onclick="event.preventDefault(); document.getElementById('archive-form-{{s.id}}').submit();">
+                                Archive
+                            </a>
+                            {% endif %}
                         </form>
                         {% if s.is_active %}
-                        <form method="post" action="/subjects/{{s.id}}/delete/" class="mt-2">
+                        <form method="post" action="/subjects/{{s.id}}/delete/" id="archive-form-{{s.id}}" class="d-none">
                             {% csrf_token %}
-                            <button class="btn btn-sm btn-outline-danger">Archive</button>
+                            <button type="submit"></button>
                         </form>
                         {% endif %}
                     </td>

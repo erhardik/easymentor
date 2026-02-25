@@ -1,16 +1,47 @@
 {% extends "base.html" %}
 {% block content %}
 
+<style>
+body.dark-mode .result-card,
+body.dark-mode .result-card.card{
+    background: #0f172a !important;
+    border-color: #334155 !important;
+    color: #e5e7eb !important;
+}
+body.dark-mode .result-table{
+    --bs-table-bg: #0f172a;
+    --bs-table-color: #e5e7eb;
+    --bs-table-border-color: #334155;
+    --bs-table-striped-bg: #111827;
+    --bs-table-hover-bg: #1e293b;
+    --bs-table-hover-color: #ffffff;
+}
+body.dark-mode .result-table thead th{
+    background: #1e293b;
+    color: #e2e8f0;
+}
+body.dark-mode .result-table a{
+    color: #bfdbfe !important;
+}
+body.dark-mode .badge.bg-info{
+    background-color: #1d4ed8 !important;
+    color: #ffffff !important;
+}
+body.dark-mode .badge.bg-secondary{
+    background-color: #334155 !important;
+}
+</style>
+
 <h3>View Result</h3>
 <div class="mb-2">
     <a href="/view-practical-marks/" class="btn btn-outline-primary btn-sm">View Practical Marks</a>
 </div>
 
 {% if matrix_rows and subjects %}
-<div class="card p-3 mb-3">
+<div class="card p-3 mb-3 result-card">
     <h5 class="mb-2">Uploaded Result Matrix</h5>
     <div class="table-responsive">
-        <table class="table table-bordered table-sm align-middle">
+        <table class="table table-bordered table-sm align-middle result-table">
             <thead class="table-dark text-center">
                 <tr>
                     <th>Test</th>
@@ -45,7 +76,7 @@
 </div>
 {% endif %}
 
-<div class="card p-3 mb-3">
+<div class="card p-3 mb-3 result-card">
     <div class="d-flex gap-2 flex-wrap align-items-end">
         <form method="get" class="d-flex gap-2 flex-wrap align-items-end">
             <div>
@@ -119,7 +150,7 @@
 {% endif %}
 
 <div class="table-responsive">
-    <table class="table table-bordered table-hover align-middle">
+    <table class="table table-bordered table-hover align-middle result-table">
         <thead class="table-dark text-center">
             <tr>
                 <th><a class="text-white text-decoration-none" href="?test={{selected_test}}&subject={{selected_subject}}&filter={{filter}}{% if mentor_filter %}&mentor={{mentor_filter}}{% endif %}&sort=roll&dir={{dir_roll}}">Roll ↑↓</a></th>
