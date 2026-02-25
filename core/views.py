@@ -34,6 +34,7 @@ from .models import (
     CallRecord,
     CoordinatorModuleAccess,
     Mentor,
+    MentorPassword,
     OtherCallRecord,
     PracticalMarkUpload,
     SifMarksLock,
@@ -303,11 +304,19 @@ def login_page(request):
                 return redirect("/home/")
             return redirect("/reports/")
 
-        # mentor login: password is "<mentor_short_name>@LJ123"
+        # mentor login supports both legacy and new scheme:
+        # - legacy: mentor@LJ123
+        # - new: <mentor_short_name>@LJ123
         mentor = resolve_mentor_identity(username)
         if mentor:
-            expected = f"{(mentor.name or '').strip().lower()}@LJ123".lower()
-            if (password or "").strip().lower() == expected:
+            entered_username = (username or "").strip().lower()
+            expected_short = f"{(mentor.name or '').strip().lower()}@LJ123".lower()
+            expected_entered = f"{entered_username}@LJ123"
+            entered_password_raw = (password or "").strip()
+            entered_password = entered_password_raw.lower()
+            cred = MentorPassword.objects.filter(mentor=mentor).first()
+            custom_ok = bool(cred and cred.check_password(entered_password_raw))
+            if custom_ok or entered_password in {expected_short, expected_entered, "mentor@lj123"}:
                 request.session["mentor"] = mentor.name
                 _active_module(request)
                 return redirect("/mentor-dashboard/")
@@ -315,6 +324,65 @@ def login_page(request):
         error = "Invalid username or password"
 
     return render(request, "login.html", {"error": error})
+
+
+@login_required
+def manage_mentors(request):
+    if request.session.get("mentor"):
+        return redirect("/mentor-dashboard/")
+
+    module = _active_module(request)
+
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        mentor_id = request.POST.get("mentor_id")
+        mentor = Mentor.objects.filter(id=mentor_id).first() if mentor_id else None
+        module_mentor_ids = set(Student.objects.filter(module=module).values_list("mentor_id", flat=True))
+        if not mentor or mentor.id not in module_mentor_ids:
+            messages.error(request, "Mentor not found for current module.")
+            return redirect("/manage-mentors/")
+
+        if action == "update_password":
+            new_password = (request.POST.get("new_password") or "").strip()
+            if len(new_password) < 6:
+                messages.error(request, "Password must be at least 6 characters.")
+            else:
+                cred, _ = MentorPassword.objects.get_or_create(mentor=mentor, defaults={"password_hash": ""})
+                cred.set_password(new_password)
+                cred.save(update_fields=["password_hash", "updated_at"])
+                messages.success(request, f"Password updated for mentor {mentor.name}.")
+        elif action == "reset_default":
+            MentorPassword.objects.filter(mentor=mentor).delete()
+            messages.success(request, f"Password reset to default rule for mentor {mentor.name}.")
+        else:
+            messages.error(request, "Invalid action.")
+        return redirect("/manage-mentors/")
+
+    mentors = (
+        Mentor.objects.filter(student__module=module)
+        .distinct()
+        .annotate(student_count=Count("student", filter=Q(student__module=module)))
+        .order_by("name")
+    )
+    cred_map = {c.mentor_id: c for c in MentorPassword.objects.filter(mentor__in=mentors)}
+    rows = []
+    for m in mentors:
+        rows.append(
+            {
+                "mentor": m,
+                "student_count": getattr(m, "student_count", 0),
+                "has_custom_password": m.id in cred_map,
+            }
+        )
+
+    return render(
+        request,
+        "manage_mentors.html",
+        {
+            "rows": rows,
+            "module": module,
+        },
+    )
 
 
 @login_required

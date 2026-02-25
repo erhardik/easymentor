@@ -190,7 +190,12 @@ def import_students_from_excel(file, module):
     mentor_short_col = find_col(df.columns, ['short name of mentor', 'mentor short'])
     mentor_full_col = find_col(df.columns, ['name of mentor'])
     mentor_fallback_col = find_col(df.columns, ['mentor'])
-    student_col = find_col(df.columns, ['student no']) or find_col(df.columns, ['student mobile'])
+    student_col = (
+        find_col(df.columns, ['student no'])
+        or find_col(df.columns, ['student mobile'])
+        or find_col(df.columns, ['student mobile no', 'student mobile number', 'student mobileno'])
+        or find_col(df.columns, ['student contact', 'student phone', 'student phone no'])
+    )
     father_col = find_col(df.columns, ['parent no', 'father'])
     mother_col = find_col(df.columns, ['mother'])
     batch_col = find_col(df.columns, ['branch', 'batch'])

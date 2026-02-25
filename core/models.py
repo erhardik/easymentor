@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils import timezone
 from django.contrib.auth.models import User
+from django.contrib.auth.hashers import make_password, check_password
 
 
 class AcademicModule(models.Model):
@@ -194,6 +195,21 @@ class Subject(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class MentorPassword(models.Model):
+    mentor = models.OneToOneField(Mentor, on_delete=models.CASCADE, related_name="password_credential")
+    password_hash = models.CharField(max_length=256)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def set_password(self, raw_password):
+        self.password_hash = make_password(raw_password)
+
+    def check_password(self, raw_password):
+        return check_password(raw_password, self.password_hash)
+
+    def __str__(self):
+        return f"MentorPassword({self.mentor.name})"
 
 
 class CoordinatorModuleAccess(models.Model):
