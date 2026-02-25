@@ -33,7 +33,9 @@ SECRET_KEY = os.getenv(
     "django-insecure-change-this-in-production"
 )
 
-DEBUG = env_bool("DEBUG", False)
+# Local default is DEBUG=True for static/media during development.
+# On Render, keep production behavior unless DEBUG is explicitly set.
+DEBUG = env_bool("DEBUG", os.getenv("RENDER", "").strip() == "")
 
 
 ALLOWED_HOSTS = env_list(

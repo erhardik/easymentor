@@ -19,11 +19,21 @@
 </form>
 
 {% if report %}
-<div class="card p-3">
-    <pre style="white-space: pre-wrap; font-family: inherit;">{{report}}</pre>
-</div>
+<hr>
+<label>Copy Message:</label>
+<textarea class="form-control" rows="12" id="reportText">{{ report }}</textarea>
+<button class="btn btn-success mt-2" onclick="copyText()">Copy</button>
 {% else %}
 <div class="alert alert-info">Select upload to generate report.</div>
 {% endif %}
+
+<script>
+function copyText(){
+    let t=document.getElementById("reportText");
+    t.select();
+    document.execCommand("copy");
+    alert("Copied for WhatsApp");
+}
+</script>
 
 {% endblock %}

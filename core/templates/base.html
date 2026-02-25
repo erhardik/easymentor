@@ -21,6 +21,40 @@
             padding-top: env(safe-area-inset-top);
         }
 
+        /* Keep classic LJ header + sidebar look even if static CSS cache misses */
+        .lj-navbar {
+            background: linear-gradient(90deg, #0b3d6d, #114f8e);
+            color: #ffffff;
+            min-height: var(--nav-h);
+            padding: 0 16px;
+        }
+
+        .lj-navbar .brand-block strong,
+        .lj-navbar .brand-block small {
+            color: #ffffff;
+        }
+
+        .lj-sidebar a {
+            display: block;
+            padding: 10px 12px;
+            color: #1f2937;
+            text-decoration: none;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            transition: background-color 0.15s ease, color 0.15s ease;
+        }
+
+        .lj-sidebar a:hover {
+            background: #0b3d6d;
+            color: #ffffff;
+        }
+
+        .lj-sidebar h6 {
+            color: #4b5563 !important;
+            margin-bottom: 10px;
+            font-size: 1.35rem;
+        }
+
         .table-responsive {
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
@@ -41,6 +75,15 @@
 
         .brand-block {
             min-width: 0;
+        }
+
+        /* Prevent oversized logo assets from breaking the full layout */
+        .lj-logo {
+            height: 44px;
+            width: auto;
+            max-width: 56px;
+            object-fit: contain;
+            flex: 0 0 auto;
         }
 
         .brand-block strong,
@@ -72,8 +115,8 @@
             margin-bottom: 8px;
             padding: 6px 10px;
             border-radius: 7px;
-            background: #dfeaff;
-            color: #214274;
+            background: #d6e4ff;
+            color: #173a70;
             font-size: 0.72rem;
             font-weight: 700;
             letter-spacing: 0.04em;
@@ -322,13 +365,19 @@
                 <h6 class="text-muted">MENU</h6>
 
                 {% if request.session.mentor %}
+                <div class="menu-group">Calls</div>
                 <a href="/mentor-dashboard/" class="d-block mb-2">Attendance Calls</a>
                 <a href="/mentor-result-calls/" class="d-block mb-2">Result Calls</a>
                 <a href="/mentor-other-calls/" class="d-block mb-2">Direct Calls</a>
+
+                <div class="menu-group">SIF</div>
+                <a href="/mentor-sif-marks/" class="d-block mb-2">SIF Marks ENTRY</a>
                 <a href="/mentor-print-sif/" class="d-block mb-2">PRINT SIF</a>
+
+                <div class="menu-group">Whatsapp</div>
                 <a href="/mentor-report/" class="d-block mb-2">Attendance Report</a>
                 <a href="/mentor-result-report/" class="d-block mb-2">Result Report</a>
-                <a href="/mentor-sif-marks/" class="d-block mb-2">SIF Marks ENTRY</a>
+                <a href="/mentor-whatsapp/" class="d-block mb-2">Message to Mentees</a>
                 {% else %}
                 <div class="menu-group">Attendance</div>
                 <a href="/view-attendance/" class="d-block mb-2">View Attendance</a>

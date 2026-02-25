@@ -4,12 +4,20 @@
 <h3>Student Master</h3>
 
 <div class="card p-3 mb-4">
-
-    <form method="post" enctype="multipart/form-data">
-        {% csrf_token %}
-        {{form.file}}
-        <button class="btn btn-success mt-2">Upload Excel</button>
-    </form>
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+        <form method="post" enctype="multipart/form-data" class="mb-0">
+            {% csrf_token %}
+            <input type="file" name="file" required class="form-control form-control-sm" style="max-width: 360px;">
+            <button class="btn btn-success mt-2">Upload Excel</button>
+        </form>
+        <form method="post" class="ms-md-auto"
+            onsubmit="return confirm('Are you sure? This will delete Student Master data for {{ module.name }} only.');">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="clear_module_students">
+            <button type="submit" class="btn btn-danger btn-sm mt-2 mt-md-0">Delete Master Data: {{ module.name }}
+            </button>
+        </form>
+    </div>
 
     {% if message %}
     <div class="alert alert-info mt-2">{{message}}</div>
@@ -48,29 +56,29 @@
 {% endif %}
 
 <table class="table table-bordered table-sm">
-<thead>
-<tr>
-<th>Roll</th>
-<th>Enrollment</th>
-<th>Name</th>
-<th>Mentor</th>
-<th>Student Mobile</th>
-<th>Father Mobile</th>
-</tr>
-</thead>
+    <thead>
+        <tr>
+            <th>Roll</th>
+            <th>Enrollment</th>
+            <th>Name</th>
+            <th>Mentor</th>
+            <th>Student Mobile</th>
+            <th>Father Mobile</th>
+        </tr>
+    </thead>
 
-<tbody>
-{% for s in students %}
-<tr>
-<td>{{s.roll_no}}</td>
-<td>{{s.enrollment}}</td>
-<td>{{s.name}}</td>
-<td>{{s.mentor.name}}</td>
-<td>{{s.student_mobile}}</td>
-<td>{{s.father_mobile}}</td>
-</tr>
-{% endfor %}
-</tbody>
+    <tbody>
+        {% for s in students %}
+        <tr>
+            <td>{{s.roll_no}}</td>
+            <td>{{s.enrollment}}</td>
+            <td>{{s.name}}</td>
+            <td>{{s.mentor.name}}</td>
+            <td>{{s.student_mobile}}</td>
+            <td>{{s.father_mobile}}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
 </table>
 
 {% endblock %}

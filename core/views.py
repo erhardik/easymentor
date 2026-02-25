@@ -21,6 +21,7 @@ from django.views.decorators.http import require_http_methods
 from django.http import JsonResponse
 from django.db.models import Max 
 from django.db.models import Q
+from urllib.parse import quote
 # ---------- LOCAL FORMS ----------
 from .forms import UploadFileForm
 
@@ -64,6 +65,15 @@ def _session_mentor_obj(request):
 
 def _active_module(request):
     return get_current_module(request)
+
+
+def _normalize_whatsapp_phone(number):
+    digits = re.sub(r"\D", "", str(number or ""))
+    if not digits:
+        return ""
+    if len(digits) == 10:
+        return f"91{digits}"
+    return digits
 
 
 def _ensure_subject_display_order(module):
@@ -300,16 +310,23 @@ def upload_students(request):
 
     message = ""
     skipped_rows = []
+    form = UploadFileForm()
 
     if request.method == 'POST':
-        form = UploadFileForm(request.POST, request.FILES)
-        if form.is_valid():
-            file = request.FILES['file']
-            try:
-                added, updated, skipped, skipped_rows = import_students_from_excel(file, module)
-                message = f"Added: {added} | Updated: {updated} | Skipped: {skipped}"
-            except Exception as e:
-                message = f"Upload failed: {str(e)}"
+        if request.POST.get("action") == "clear_module_students":
+            deleted_count, _ = Student.objects.filter(module=module).delete()
+            message = f"Deleted student master data for module '{module.name}'. Records removed: {deleted_count}"
+        else:
+            form = UploadFileForm(request.POST, request.FILES)
+            if form.is_valid():
+                file = request.FILES['file']
+                try:
+                    added, updated, skipped, skipped_rows = import_students_from_excel(file, module)
+                    message = f"Added: {added} | Updated: {updated} | Skipped: {skipped}"
+                except Exception as e:
+                    message = f"Upload failed: {str(e)}"
+            else:
+                message = "Please select a file to upload."
     else:
         form = UploadFileForm()
 
@@ -319,6 +336,7 @@ def upload_students(request):
         'form': form,
         'message': message,
         'students': students,
+        'module': module,
         'skipped_rows': skipped_rows[:200],
     })
 
@@ -1920,6 +1938,91 @@ def mentor_print_sif(request):
             "students": students,
         },
     )
+
+
+def mentor_whatsapp_panel(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+
+    module = _active_module(request)
+    students = list(
+        Student.objects.filter(module=module, mentor=mentor).order_by("roll_no", "name")
+    )
+
+    message_text = ""
+    target = ""
+    recipients = []
+
+    if request.method == "POST":
+        message_text = (request.POST.get("message") or "").strip()
+        target = (request.POST.get("target") or "").strip()
+        if not message_text:
+            messages.error(request, "Message is required.")
+        elif target not in {"student", "father"}:
+            messages.error(request, "Choose a valid target.")
+        else:
+            for s in students:
+                raw_number = s.student_mobile if target == "student" else s.father_mobile
+                phone = _normalize_whatsapp_phone(raw_number)
+                if not phone:
+                    continue
+                recipients.append(
+                    {
+                        "name": s.name,
+                        "enrollment": s.enrollment,
+                        "phone": phone,
+                    }
+                )
+            if not recipients:
+                messages.warning(request, f"No valid {target} numbers found for your mentees.")
+
+    return render(
+        request,
+        "mentor_whatsapp_panel.html",
+        {
+            "message_text": message_text,
+            "target": target,
+            "recipients": recipients,
+            "recipient_count": len(recipients),
+            "message_encoded": quote(message_text),
+        },
+    )
+
+
+def download_whatsapp_extension(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor and not request.user.is_authenticated:
+        return redirect("/")
+
+    ext_dir = os.path.join(settings.BASE_DIR, "whatsapp_automation_extension")
+    if not os.path.isdir(ext_dir):
+        return HttpResponse("Extension files not found.", status=404)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name in ["manifest.json", "whatsapp_content.js", "README.md"]:
+            path = os.path.join(ext_dir, name)
+            if os.path.exists(path):
+                zf.write(path, arcname=name)
+        zf.writestr(
+            "INSTALL_AND_SUPPORT.txt",
+            (
+                "EasyMentor WhatsApp Extension\n\n"
+                "How to use:\n"
+                "1. Go to chrome://extensions\n"
+                "2. Enable Developer mode\n"
+                "3. Load unpacked -> select folder whatsapp_automation_extension\n"
+                "4. Login once to WhatsApp Web\n"
+                "5. In portal mentor page, enter message and click Start Auto (Extension)\n\n"
+                "Buy me a chai with UPI link:\n"
+                "upi://pay?pa=8866749627@upi&pn=Hardik%20Shah&am=15&cu=INR&tn=Cutting%20Chai\n"
+            ),
+        )
+
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = 'attachment; filename="easymentor_whatsapp_extension.zip"'
+    return response
 
 
 def mentor_sif_marks(request):

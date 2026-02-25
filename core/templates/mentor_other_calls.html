@@ -96,6 +96,7 @@
 
 <script>
 const PENDING_OTHER_CALL_KEY = "pending_other_call";
+const PENDING_OTHER_CALL_EXPECT_KEY = "pending_other_call_expect_modal";
 let modalShownForPending = false;
 
 function getPendingCall(){
@@ -111,10 +112,15 @@ function setPendingCall(data){
 }
 function clearPendingCall(){
     localStorage.removeItem(PENDING_OTHER_CALL_KEY);
+    sessionStorage.removeItem(PENDING_OTHER_CALL_EXPECT_KEY);
     modalShownForPending = false;
 }
 
 function openCallResultModalIfPending(){
+    const expectModal = sessionStorage.getItem(PENDING_OTHER_CALL_EXPECT_KEY) === "1";
+    if(!expectModal){
+        return;
+    }
     const pending = getPendingCall();
     if(!pending || modalShownForPending){
         return;
@@ -145,6 +151,7 @@ function openCallResultModalIfPending(){
     onCategoryChange();
 
     modalShownForPending = true;
+    sessionStorage.removeItem(PENDING_OTHER_CALL_EXPECT_KEY);
     new bootstrap.Modal(document.getElementById("callResultModal")).show();
 }
 
@@ -157,6 +164,7 @@ document.querySelectorAll(".call-btn").forEach(btn => {
             alert("Number not available");
             return;
         }
+        sessionStorage.setItem(PENDING_OTHER_CALL_EXPECT_KEY, "1");
         setPendingCall({ id: callId, phone: phone, target: target, started_at: Date.now() });
         window.location.href = "tel:" + phone;
     });
