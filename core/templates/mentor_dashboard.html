@@ -6,9 +6,12 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h3 class="mb-0">Welcome {{mentor.name}}</h3>
 
-    {% if selected_week %}
-        <span class="badge bg-danger fs-6">Week-{{selected_week}}</span>
-    {% endif %}
+    <div class="d-flex align-items-center gap-2">
+        <a href="/mentor-semester-register/" class="btn btn-outline-info btn-sm">Register</a>
+        {% if selected_week %}
+            <span class="badge bg-danger fs-6">Week-{{selected_week}}</span>
+        {% endif %}
+    </div>
 </div>
 
 

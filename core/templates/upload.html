@@ -55,30 +55,122 @@
 </div>
 {% endif %}
 
-<table class="table table-bordered table-sm">
-    <thead>
-        <tr>
-            <th>Roll</th>
-            <th>Enrollment</th>
-            <th>Name</th>
-            <th>Mentor</th>
-            <th>Student Mobile</th>
-            <th>Father Mobile</th>
-        </tr>
-    </thead>
+<h4 class="mb-2">Student Data (Module-wise)</h4>
+<div class="table-responsive">
+    <table class="table table-bordered table-sm table-hover align-middle">
+        <thead class="table-dark text-center">
+            <tr>
+                <th>Roll ↑↓</th>
+                <th>Branch ↑↓</th>
+                <th>Enrollment ↑↓</th>
+                <th>Name ↑↓</th>
+                <th>Mentor ↑↓</th>
+                <th>Student Mobile ↑↓</th>
+                <th>Father Mobile ↑↓</th>
+            </tr>
+            <tr>
+                <th><input id="f_roll" class="form-control form-control-sm" placeholder="Filter"></th>
+                <th><input id="f_batch" class="form-control form-control-sm" placeholder="Filter"></th>
+                <th><input id="f_enrollment" class="form-control form-control-sm" placeholder="Filter"></th>
+                <th><input id="f_name" class="form-control form-control-sm" placeholder="Filter"></th>
+                <th><input id="f_mentor" class="form-control form-control-sm" placeholder="Filter"></th>
+                <th><input id="f_student_mobile" class="form-control form-control-sm" placeholder="Filter"></th>
+                <th>
+                    <div class="d-flex gap-1">
+                        <input id="f_father_mobile" class="form-control form-control-sm" placeholder="Filter">
+                        <button id="clearFiltersBtn" type="button" class="btn btn-sm btn-secondary">Clear</button>
+                    </div>
+                </th>
+            </tr>
+        </thead>
 
-    <tbody>
-        {% for s in students %}
-        <tr>
-            <td>{{s.roll_no}}</td>
-            <td>{{s.enrollment}}</td>
-            <td>{{s.name}}</td>
-            <td>{{s.mentor.name}}</td>
-            <td>{{s.student_mobile}}</td>
-            <td>{{s.father_mobile}}</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+        <tbody id="studentMasterBody">
+            {% for s in students %}
+            <tr>
+                <td>{{s.roll_no}}</td>
+                <td>{{s.batch|default:"-"}}</td>
+                <td>{{s.enrollment}}</td>
+                <td>{{s.name}}</td>
+                <td>{{s.mentor.name}}</td>
+                <td>{{s.student_mobile|default:"-"}}</td>
+                <td>{{s.father_mobile|default:"-"}}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+    (function () {
+        const body = document.getElementById("studentMasterBody");
+        if (!body) { return; }
+
+        const rows = Array.from(body.querySelectorAll("tr"));
+        const inputs = {
+            roll: document.getElementById("f_roll"),
+            batch: document.getElementById("f_batch"),
+            enrollment: document.getElementById("f_enrollment"),
+            name: document.getElementById("f_name"),
+            mentor: document.getElementById("f_mentor"),
+            student_mobile: document.getElementById("f_student_mobile"),
+            father_mobile: document.getElementById("f_father_mobile")
+        };
+
+        const norm = (v) => (v || "").toString().toLowerCase().trim();
+
+        function filterRows() {
+            const q = {
+                roll: norm(inputs.roll.value),
+                batch: norm(inputs.batch.value),
+                enrollment: norm(inputs.enrollment.value),
+                name: norm(inputs.name.value),
+                mentor: norm(inputs.mentor.value),
+                student_mobile: norm(inputs.student_mobile.value),
+                father_mobile: norm(inputs.father_mobile.value)
+            };
+
+            rows.forEach(function (row) {
+                const cols = row.querySelectorAll("td");
+                if (cols.length < 7) { return; }
+                const data = {
+                    roll: norm(cols[0].innerText),
+                    batch: norm(cols[1].innerText),
+                    enrollment: norm(cols[2].innerText),
+                    name: norm(cols[3].innerText),
+                    mentor: norm(cols[4].innerText),
+                    student_mobile: norm(cols[5].innerText),
+                    father_mobile: norm(cols[6].innerText)
+                };
+                const ok =
+                    (!q.roll || data.roll.includes(q.roll)) &&
+                    (!q.batch || data.batch.includes(q.batch)) &&
+                    (!q.enrollment || data.enrollment.includes(q.enrollment)) &&
+                    (!q.name || data.name.includes(q.name)) &&
+                    (!q.mentor || data.mentor.includes(q.mentor)) &&
+                    (!q.student_mobile || data.student_mobile.includes(q.student_mobile)) &&
+                    (!q.father_mobile || data.father_mobile.includes(q.father_mobile));
+                row.style.display = ok ? "" : "none";
+            });
+        }
+
+        const clearBtn = document.getElementById("clearFiltersBtn");
+
+        Object.values(inputs).forEach(function (el) {
+            if (!el) { return; }
+            el.addEventListener("input", filterRows);
+        });
+
+        if (clearBtn) {
+            clearBtn.addEventListener("click", function () {
+                Object.values(inputs).forEach(function (el) {
+                    if (el) { el.value = ""; }
+                });
+                filterRows();
+            });
+        }
+
+        filterRows();
+    })();
+</script>
 
 {% endblock %}

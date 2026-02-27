@@ -6,6 +6,7 @@ import tempfile
 import threading
 import uuid
 import zipfile
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.shortcuts import render, redirect
@@ -57,6 +58,7 @@ from .pdf_report import generate_student_pdf, generate_student_prefilled_pdf
 from .module_utils import allowed_modules_for_user, get_current_module, is_superadmin_user
 
 TEST_NAMES = ["T1", "T2", "T3", "T4", "REMEDIAL"]
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def _session_mentor_obj(request):
@@ -806,6 +808,63 @@ def upload_results_progress(request, job_id):
             "result": job.result_payload or {},
         }
     )
+
+
+def _to_ist_datetime_text(dt):
+    if not dt:
+        return "-", "-"
+    local_dt = dt.astimezone(IST)
+    return local_dt.strftime("%d-%m-%Y"), local_dt.strftime("%I:%M %p")
+
+
+def _call_status_text(status):
+    if status == "received":
+        return "Received"
+    if status == "not_received":
+        return "Not Received"
+    return "Pending"
+
+
+def _exam_name_for_sif(test_name):
+    test = (test_name or "").upper()
+    if test == "T1":
+        return "T1"
+    if test == "T2":
+        return "T2 / (T1+T2)"
+    if test == "T3":
+        return "T3 / (T1+T2+T3)"
+    if test == "T4":
+        return "T4 / (T1+T2+T3+T4)"
+    if test == "REMEDIAL":
+        return "REM"
+    return test_name or "-"
+
+
+def _result_thresholds(test_name):
+    test = (test_name or "").upper()
+    if test == "T1":
+        return 9, 9
+    if test == "T2":
+        return 9, 18
+    if test == "T3":
+        return 9, 27
+    if test == "T4":
+        return 18, 35
+    return 35, 35
+
+
+def _test_sort_key(test_name):
+    order = {"T1": 1, "T2": 2, "T3": 3, "T4": 4, "REMEDIAL": 5}
+    return order.get((test_name or "").upper(), 99)
+
+
+def _subject_sort_key(subject_name):
+    name = (subject_name or "").strip().lower()
+    priority = ["mathematics", "java", "physics", "software engineering"]
+    for idx, token in enumerate(priority, start=1):
+        if token in name:
+            return idx
+    return 99
 
 
 @login_required
@@ -2186,6 +2245,257 @@ def mentor_print_sif(request):
     )
 
 
+def mentor_view_sif(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+
+    module = _active_module(request)
+    students = list(
+        Student.objects.select_related("mentor")
+        .filter(module=module, mentor=mentor)
+        .order_by("roll_no", "name")
+    )
+
+    selected_enrollment = (request.GET.get("enrollment") or "").strip()
+    selected_student = None
+    if students:
+        if selected_enrollment:
+            selected_student = next((s for s in students if s.enrollment == selected_enrollment), None)
+        if not selected_student:
+            selected_student = students[0]
+
+    sem_value = "1"
+    if module and module.semester:
+        sem_value = (module.semester.split("-")[-1] or "1").strip()
+
+    attendance_rows = []
+    result_rows = []
+    other_rows = []
+
+    if selected_student:
+        calls_by_week = {
+            c.week_no: c
+            for c in CallRecord.objects.filter(student=selected_student).order_by("week_no")
+        }
+        attendance_qs = Attendance.objects.filter(student=selected_student).order_by("week_no")
+        sr = 1
+        for att in attendance_qs:
+            if (att.week_percentage or 0) >= 80 and (att.overall_percentage or 0) >= 80:
+                continue
+            call = calls_by_week.get(att.week_no)
+            call_done = bool(call and call.final_status in ("received", "not_received"))
+            if call_done:
+                call_dt = (call.attempt2_time or call.attempt1_time or call.created_at)
+                date, time = _to_ist_datetime_text(call_dt)
+                duration = (call.duration or "").strip() or "-"
+                time_duration = f"{time} ({duration})" if time != "-" else "-"
+            else:
+                date, time, duration, time_duration = "-", "-", "-", "-"
+            discussed = ((call.talked_with or "-").title() if call else "-")
+            parent_remark = "-"
+            faculty_remark = "-"
+            if call and call.parent_reason:
+                reason_text = (call.parent_reason or "").strip()
+                if "PARENT::" in reason_text and "||FACULTY::" in reason_text:
+                    p, f = reason_text.split("||FACULTY::", 1)
+                    parent_remark = p.replace("PARENT::", "", 1).strip() or "-"
+                    faculty_remark = f.strip() or "-"
+                else:
+                    parent_remark = reason_text
+
+            attendance_rows.append(
+                {
+                    "sr": sr,
+                    "sem": sem_value,
+                    "week_no": att.week_no,
+                    "attend_text": f"W:{round(att.week_percentage, 2)} / O:{round(att.overall_percentage, 2)}",
+                    "status": _call_status_text(call.final_status if call else None),
+                    "date": date,
+                    "time_duration": time_duration,
+                    "discussed": discussed,
+                    "parent_remark": parent_remark,
+                    "faculty_remark": faculty_remark,
+                }
+            )
+            sr += 1
+
+        result_rows_qs = StudentResult.objects.filter(student=selected_student).select_related("upload", "upload__subject")
+        result_rows_sorted = sorted(
+            result_rows_qs,
+            key=lambda r: (
+                _test_sort_key(r.upload.test_name if r.upload else ""),
+                _subject_sort_key(r.upload.subject.name if r.upload and r.upload.subject else ""),
+                r.upload.uploaded_at if r.upload else timezone.now(),
+                r.id,
+            ),
+        )
+        result_call_map = {
+            c.upload_id: c
+            for c in ResultCallRecord.objects.filter(student=selected_student).select_related("upload")
+        }
+        sr = 1
+        for row in result_rows_sorted:
+            if not row.upload:
+                continue
+            cur_thr, total_thr = _result_thresholds(row.upload.test_name)
+            current_fail = row.marks_current is not None and row.marks_current < cur_thr
+            total_fail = row.marks_total is not None and row.marks_total < total_thr
+            if not (current_fail or total_fail):
+                continue
+
+            call = result_call_map.get(row.upload_id)
+            call_done = bool(call and call.final_status in ("received", "not_received"))
+            if call_done:
+                call_dt = (call.attempt2_time or call.attempt1_time or call.created_at)
+                date, time = _to_ist_datetime_text(call_dt)
+                duration = (call.duration or "").strip() or "-"
+                time_duration = f"{time} ({duration})" if time != "-" else "-"
+            else:
+                date, time, duration, time_duration = "-", "-", "-", "-"
+            discussed = ((call.talked_with or "-").title() if call else "-")
+            subject_name = row.upload.subject.name if row.upload.subject else "-"
+            obtained = "-" if row.marks_current is None else row.marks_current
+            total = "-" if row.marks_total is None else row.marks_total
+            result_rows.append(
+                {
+                    "sr": sr,
+                    "sem": sem_value,
+                    "status": _call_status_text(call.final_status if call else None),
+                    "date": date,
+                    "time_duration": time_duration,
+                    "discussed": discussed,
+                    "exam": _exam_name_for_sif(row.upload.test_name),
+                    "subject": f"{subject_name} ({obtained}/{total})",
+                    "remark": (call.parent_reason if call and call.parent_reason else "-"),
+                }
+            )
+            sr += 1
+
+        direct_call = OtherCallRecord.objects.filter(student=selected_student).first()
+        if direct_call and direct_call.call_category != "poor_result":
+            call_done = direct_call.final_status in ("received", "not_received")
+            if call_done:
+                call_dt = direct_call.attempt2_time or direct_call.attempt1_time or direct_call.updated_at or direct_call.created_at
+                date, time = _to_ist_datetime_text(call_dt)
+                duration = (direct_call.duration or "").strip() or "-"
+                time_duration = f"{time} ({duration})" if time != "-" else "-"
+            else:
+                time_duration, date = "-", "-"
+            discussed = (direct_call.talked_with or "-").title()
+            other_rows.append(
+                {
+                    "sr": 1,
+                    "sem": sem_value,
+                    "status": _call_status_text(direct_call.final_status),
+                    "date": date,
+                    "time_duration": time_duration,
+                    "discussed": discussed,
+                    "reason": direct_call.call_done_reason or "-",
+                    "remark": direct_call.parent_remark or "-",
+                }
+            )
+        else:
+            other_rows.append(
+                {
+                    "sr": 1,
+                    "sem": sem_value,
+                    "status": "Pending",
+                    "date": "-",
+                    "time_duration": "-",
+                    "discussed": "-",
+                    "reason": "-",
+                    "remark": "-",
+                }
+            )
+
+    return render(
+        request,
+        "mentor_view_sif.html",
+        {
+            "mentor": mentor,
+            "students": students,
+            "selected_student": selected_student,
+            "attendance_rows": attendance_rows,
+            "result_rows": result_rows,
+            "other_rows": other_rows,
+        },
+    )
+
+
+def mentor_student_data(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+
+    module = _active_module(request)
+    qs = Student.objects.select_related("mentor").filter(module=module)
+
+    filters = {
+        "roll": (request.GET.get("f_roll") or "").strip(),
+        "batch": (request.GET.get("f_batch") or "").strip(),
+        "enrollment": (request.GET.get("f_enrollment") or "").strip(),
+        "name": (request.GET.get("f_name") or "").strip(),
+        "mentor": (request.GET.get("f_mentor") or "").strip(),
+        "student_mobile": (request.GET.get("f_student_mobile") or "").strip(),
+        "father_mobile": (request.GET.get("f_father_mobile") or "").strip(),
+    }
+
+    if filters["roll"]:
+        qs = qs.filter(roll_no__icontains=filters["roll"])
+    if filters["batch"]:
+        qs = qs.filter(batch__icontains=filters["batch"])
+    if filters["enrollment"]:
+        qs = qs.filter(enrollment__icontains=filters["enrollment"])
+    if filters["name"]:
+        qs = qs.filter(name__icontains=filters["name"])
+    if filters["mentor"]:
+        qs = qs.filter(mentor__name__icontains=filters["mentor"])
+    if filters["student_mobile"]:
+        qs = qs.filter(student_mobile__icontains=filters["student_mobile"])
+    if filters["father_mobile"]:
+        qs = qs.filter(father_mobile__icontains=filters["father_mobile"])
+
+    sort = (request.GET.get("sort") or "roll").strip()
+    direction = (request.GET.get("dir") or "asc").strip().lower()
+    sort_map = {
+        "roll": "roll_no",
+        "batch": "batch",
+        "enrollment": "enrollment",
+        "name": "name",
+        "mentor": "mentor__name",
+        "student_mobile": "student_mobile",
+        "father_mobile": "father_mobile",
+    }
+    sort_field = sort_map.get(sort, "roll_no")
+    if direction == "desc":
+        sort_field = f"-{sort_field}"
+    students = qs.order_by(sort_field, "name")
+
+    def next_dir(key):
+        if sort == key and direction == "asc":
+            return "desc"
+        return "asc"
+
+    return render(
+        request,
+        "mentor_student_data.html",
+        {
+            "students": students,
+            "filters": filters,
+            "sort": sort,
+            "direction": direction,
+            "dir_roll": next_dir("roll"),
+            "dir_batch": next_dir("batch"),
+            "dir_enrollment": next_dir("enrollment"),
+            "dir_name": next_dir("name"),
+            "dir_mentor": next_dir("mentor"),
+            "dir_student_mobile": next_dir("student_mobile"),
+            "dir_father_mobile": next_dir("father_mobile"),
+        },
+    )
+
+
 def mentor_whatsapp_panel(request):
     mentor = _session_mentor_obj(request)
     if not mentor:
@@ -2494,6 +2804,9 @@ def manage_modules(request):
 # ---------------- SEM REGISTER ----------------
 
 def semester_register(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-semester-register/")
+
     module = _active_module(request)
 
     # all uploaded weeks
@@ -2528,6 +2841,55 @@ def semester_register(request):
         table.append(row)
 
     return render(request, "semester_register.html", {
+        "title": "Overall Attendance Register",
         "weeks": weeks,
         "rows": table
     })
+
+
+def mentor_semester_register(request):
+    mentor = _session_mentor_obj(request)
+    if not mentor:
+        return redirect("/")
+
+    module = _active_module(request)
+    weeks = sorted(
+        Attendance.objects.filter(student__module=module, student__mentor=mentor)
+        .values_list("week_no", flat=True)
+        .distinct()
+    )
+
+    students = (
+        Student.objects.select_related("mentor")
+        .filter(module=module, mentor=mentor)
+        .order_by("roll_no")
+    )
+
+    table = []
+    for s in students:
+        row = {
+            "roll": s.roll_no,
+            "enrollment": s.enrollment,
+            "name": s.name,
+            "mentor": s.mentor.name,
+        }
+        overall = None
+        for w in weeks:
+            rec = Attendance.objects.filter(student=s, week_no=w).first()
+            if rec:
+                row[f"week_{w}"] = rec.week_percentage
+                overall = rec.overall_percentage
+            else:
+                row[f"week_{w}"] = None
+        row["overall"] = overall
+        table.append(row)
+
+    return render(
+        request,
+        "semester_register.html",
+        {
+            "title": "My Mentees Attendance Register",
+            "weeks": weeks,
+            "rows": table,
+        },
+    )

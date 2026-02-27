@@ -2,7 +2,7 @@
 {% load get_dynamic %}
 {% block content %}
 
-<h3>Overall Attendance Register</h3>
+<h3>{{ title|default:"Overall Attendance Register" }}</h3>
 
 <div class="table-responsive">
 <table class="table table-bordered table-hover">
@@ -35,7 +35,7 @@
         <td>
             {% with val=r|get_week:w %}
                 {% if val %}
-                    {{val}}%
+                    <span class="{% if val < 80 %}text-danger fw-bold{% endif %}">{{val}}%</span>
                 {% else %}
                     -
                 {% endif %}
@@ -43,7 +43,7 @@
         </td>
     {% endfor %}
 
-    <td><b>{{r.overall}}%</b></td>
+    <td><b class="{% if r.overall and r.overall < 80 %}text-danger{% endif %}">{{r.overall}}%</b></td>
 </tr>
 {% endfor %}
 
