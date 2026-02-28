@@ -364,6 +364,7 @@ class OtherCallRecord(models.Model):
     CATEGORY_CHOICES = [
         ("less_attendance", "Less Attendance"),
         ("poor_result", "Poor Result"),
+        ("mentor_intro", "Mentor Intro Call"),
         ("other", "Other"),
     ]
 

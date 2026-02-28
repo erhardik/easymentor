@@ -25,6 +25,12 @@ from django.http import JsonResponse
 from django.db.models import Max 
 from django.db.models import Q
 from urllib.parse import quote
+from django.core.paginator import Paginator
+from openpyxl import Workbook
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 # ---------- LOCAL FORMS ----------
 from .forms import UploadFileForm
 
@@ -1688,7 +1694,7 @@ def save_other_call(request):
 
     if target in {"student", "father"}:
         call.last_called_target = target
-    if call_category not in {"less_attendance", "poor_result", "other"}:
+    if call_category not in {"less_attendance", "poor_result", "other", "mentor_intro"}:
         call_category = "other"
     call.call_category = call_category
 
@@ -2130,6 +2136,456 @@ def coordinator_dashboard(request):
         })
 
     return render(request,"coordinator_dashboard.html",{"data":data,"week":week})
+
+
+def _build_live_followup_rows(module, selected_mentor="", selected_type="all", selected_week=None, selected_exam="all"):
+    mentor_names = list(
+        Mentor.objects.filter(student__module=module)
+        .distinct()
+        .order_by("name")
+        .values_list("name", flat=True)
+    )
+
+    rows = []
+
+    def _fmt_num(v):
+        if v is None:
+            return "-"
+        try:
+            f = float(v)
+            return f"{f:.2f}".rstrip("0").rstrip(".")
+        except Exception:
+            return str(v)
+
+    def _status_text(status):
+        if status == "received":
+            return "Received"
+        if status == "not_received":
+            return "Not Received"
+        return "Pending"
+
+    def _result_denom(test_name):
+        test = (test_name or "").upper()
+        if test == "T1":
+            return ("T1/T1", 25, 25)
+        if test == "T2":
+            return ("T2/T1+T2", 25, 50)
+        if test == "T3":
+            return ("T3/T1+T2+T3", 25, 75)
+        if test == "T4":
+            return ("T4/T1+T2+T3+T4", 50, 100)
+        return ("REMEDIAL/REMEDIAL", 100, 100)
+
+    attendance_weeks = list(
+        Attendance.objects.filter(student__module=module)
+        .order_by("week_no")
+        .values_list("week_no", flat=True)
+        .distinct()
+    )
+
+    attendance_calls = (
+        CallRecord.objects.select_related("student", "student__mentor")
+        .filter(student__module=module)
+    )
+    if selected_week:
+        attendance_calls = attendance_calls.filter(week_no=selected_week)
+    attendance_pairs = {(c.student_id, c.week_no) for c in attendance_calls}
+    attendance_map = {
+        (a.student_id, a.week_no): a
+        for a in Attendance.objects.filter(
+            student__module=module,
+            student_id__in=[p[0] for p in attendance_pairs] if attendance_pairs else [],
+            week_no__in=[p[1] for p in attendance_pairs] if attendance_pairs else [],
+        )
+    }
+    for c in attendance_calls:
+        status = _status_text(c.final_status)
+        dt = c.attempt2_time or c.attempt1_time or c.created_at
+        if c.final_status:
+            date_text, time_text = _to_ist_datetime_text(dt)
+            duration = c.duration or "-"
+        else:
+            date_text, time_text, duration = "-", "-", "-"
+        a = attendance_map.get((c.student_id, c.week_no))
+        wk = _fmt_num(getattr(a, "week_percentage", None))
+        ov = _fmt_num(getattr(a, "overall_percentage", None))
+        rows.append(
+            {
+                "mentor": c.student.mentor.name if c.student.mentor_id else "",
+                "roll_no": c.student.roll_no,
+                "enrollment": c.student.enrollment,
+                "student_name": c.student.name,
+                "followup_type": "less_attendance",
+                "followup_label": "Less Attendance",
+                "exam_key": "",
+                "status": status,
+                "date_text": date_text,
+                "time_text": time_text,
+                "duration": duration,
+                "reason": f"Week-{c.week_no} W: {wk}%, O: {ov}",
+                "remarks": c.parent_reason or "-",
+                "sort_dt": dt or timezone.now(),
+            }
+        )
+
+    result_calls = (
+        ResultCallRecord.objects.select_related("student", "student__mentor", "upload", "upload__subject")
+        .filter(student__module=module)
+    )
+    for c in result_calls:
+        status = _status_text(c.final_status)
+        dt = c.attempt2_time or c.attempt1_time or c.created_at
+        if c.final_status:
+            date_text, time_text = _to_ist_datetime_text(dt)
+            duration = c.duration or "-"
+        else:
+            date_text, time_text, duration = "-", "-", "-"
+        test_name = c.upload.test_name if c.upload_id else "-"
+        test_key = (test_name or "").upper()
+        subject_name = c.upload.subject.name if c.upload_id and c.upload.subject_id else "-"
+        exam_label, cur_total, overall_total = _result_denom(test_name)
+        current_marks = _fmt_num(c.marks_current)
+        overall_marks = _fmt_num(c.marks_total)
+        rows.append(
+            {
+                "mentor": c.student.mentor.name if c.student.mentor_id else "",
+                "roll_no": c.student.roll_no,
+                "enrollment": c.student.enrollment,
+                "student_name": c.student.name,
+                "followup_type": "poor_result",
+                "followup_label": "Poor Result",
+                "exam_key": test_key,
+                "status": status,
+                "date_text": date_text,
+                "time_text": time_text,
+                "duration": duration,
+                "reason": f"{exam_label} : {subject_name} : ({current_marks}/{cur_total}, {overall_marks}/{overall_total})",
+                "remarks": c.parent_reason or "-",
+                "sort_dt": dt or timezone.now(),
+            }
+        )
+
+    other_calls = (
+        OtherCallRecord.objects.select_related("student", "student__mentor")
+        .filter(student__module=module)
+    )
+    for c in other_calls:
+        status = _status_text(c.final_status)
+        dt = c.attempt2_time or c.attempt1_time or c.updated_at or c.created_at
+        if c.final_status:
+            date_text, time_text = _to_ist_datetime_text(dt)
+            duration = c.duration or "-"
+        else:
+            date_text, time_text, duration = "-", "-", "-"
+        reason_text = (c.call_done_reason or "").strip()
+        remarks_text = (c.parent_remark or "").strip()
+        lower_blob = f"{reason_text} {remarks_text}".lower()
+
+        if c.call_category == "less_attendance":
+            f_type = "less_attendance"
+            f_label = "Less Attendance"
+            reason = reason_text or "Less attendance follow-up"
+            exam_key = ""
+        elif c.call_category == "poor_result":
+            f_type = "poor_result"
+            f_label = "Poor Result"
+            if c.exam_name or c.subject_name:
+                reason = f"Poor result ({c.exam_name or '-'} - {c.subject_name or '-'})"
+            else:
+                reason = reason_text or "Poor result follow-up"
+            exam_raw = (c.exam_name or "").upper()
+            if "T1" in exam_raw and "T2" not in exam_raw and "T3" not in exam_raw and "T4" not in exam_raw:
+                exam_key = "T1"
+            elif "T2" in exam_raw:
+                exam_key = "T2"
+            elif "T3" in exam_raw:
+                exam_key = "T3"
+            elif "T4" in exam_raw or "SEE" in exam_raw or "TOTAL" in exam_raw:
+                exam_key = "T4"
+            else:
+                exam_key = ""
+        elif c.call_category == "mentor_intro":
+            f_type = "mentor_intro"
+            f_label = "Mentor Intro Call"
+            reason = reason_text or "Mentor introduction call"
+            exam_key = ""
+        else:
+            if "intro" in lower_blob:
+                f_type = "mentor_intro"
+                f_label = "Mentor Intro Call"
+            else:
+                f_type = "other_direct"
+                f_label = "Other (Direct)"
+            reason = reason_text or "Direct call"
+            exam_key = ""
+
+        rows.append(
+            {
+                "mentor": c.student.mentor.name if c.student.mentor_id else "",
+                "roll_no": c.student.roll_no,
+                "enrollment": c.student.enrollment,
+                "student_name": c.student.name,
+                "followup_type": f_type,
+                "followup_label": f_label,
+                "exam_key": exam_key,
+                "status": status,
+                "date_text": date_text,
+                "time_text": time_text,
+                "duration": duration,
+                "reason": reason,
+                "remarks": remarks_text or "-",
+                "sort_dt": dt or timezone.now(),
+            }
+        )
+
+    if selected_mentor:
+        rows = [r for r in rows if r["mentor"] == selected_mentor]
+
+    if selected_type != "all":
+        rows = [r for r in rows if r["followup_type"] == selected_type]
+
+    if selected_exam in {"T1", "T2", "T3", "T4"}:
+        rows = [r for r in rows if r.get("exam_key") == selected_exam]
+
+    rows.sort(key=lambda r: (r["sort_dt"], r["mentor"] or "", r["roll_no"] or 999999), reverse=True)
+    return mentor_names, attendance_weeks, rows
+
+
+@login_required
+def live_followup_sheet(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+
+    module = _active_module(request)
+    selected_mentor = (request.GET.get("mentor") or "").strip()
+    selected_type = (request.GET.get("type") or "all").strip().lower()
+    selected_week_raw = (request.GET.get("week") or "").strip()
+    selected_exam = (request.GET.get("exam") or "ALL").strip().upper()
+    selected_sort = (request.GET.get("sort") or "date").strip().lower()
+    selected_dir = (request.GET.get("dir") or "desc").strip().lower()
+    page_number = request.GET.get("page", "1")
+
+    selected_week = None
+    week_param_present = "week" in request.GET
+    if selected_week_raw.isdigit():
+        selected_week = int(selected_week_raw)
+
+    if selected_exam not in {"ALL", "T1", "T2", "T3", "T4"}:
+        selected_exam = "ALL"
+    mentor_names, attendance_weeks, rows = _build_live_followup_rows(
+        module,
+        selected_mentor,
+        selected_type,
+        selected_week,
+        selected_exam if selected_exam != "ALL" else "all",
+    )
+    if (not week_param_present) and selected_week is None and attendance_weeks:
+        selected_week = max(attendance_weeks)
+        mentor_names, attendance_weeks, rows = _build_live_followup_rows(
+            module,
+            selected_mentor,
+            selected_type,
+            selected_week,
+            selected_exam if selected_exam != "ALL" else "all",
+        )
+    selected_week_q = str(selected_week) if selected_week is not None else "ALL"
+
+    key_map = {
+        "mentor": "mentor",
+        "roll": "roll_no",
+        "enrollment": "enrollment",
+        "name": "student_name",
+        "type": "followup_label",
+        "status": "status",
+        "date": "sort_dt",
+        "duration": "duration",
+        "reason": "reason",
+        "remarks": "remarks",
+    }
+    if selected_sort not in key_map:
+        selected_sort = "date"
+    if selected_dir not in {"asc", "desc"}:
+        selected_dir = "desc"
+
+    sort_key = key_map[selected_sort]
+    reverse = selected_dir == "desc"
+
+    if sort_key == "roll_no":
+        rows.sort(key=lambda r: (r.get("roll_no") is None, r.get("roll_no") or 0), reverse=reverse)
+    elif sort_key == "sort_dt":
+        rows.sort(key=lambda r: r.get("sort_dt") or timezone.now(), reverse=reverse)
+    else:
+        rows.sort(key=lambda r: str(r.get(sort_key) or "").lower(), reverse=reverse)
+
+    paginator = Paginator(rows, 120)
+    page_obj = paginator.get_page(page_number)
+
+    return render(
+        request,
+        "live_followup_sheet.html",
+        {
+            "rows": page_obj.object_list,
+            "page_obj": page_obj,
+            "mentor_names": mentor_names,
+            "attendance_weeks": attendance_weeks,
+            "selected_mentor": selected_mentor,
+            "selected_type": selected_type,
+            "selected_week": selected_week,
+            "selected_week_q": selected_week_q,
+            "selected_exam": selected_exam,
+            "selected_sort": selected_sort,
+            "selected_dir": selected_dir,
+            "module": module,
+        },
+    )
+
+
+@login_required
+def live_followup_sheet_excel(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+
+    module = _active_module(request)
+    selected_mentor = (request.GET.get("mentor") or "").strip()
+    selected_type = (request.GET.get("type") or "all").strip().lower()
+    selected_week_raw = (request.GET.get("week") or "").strip()
+    selected_exam = (request.GET.get("exam") or "ALL").strip().upper()
+    selected_week = int(selected_week_raw) if selected_week_raw.isdigit() else None
+    if selected_exam not in {"ALL", "T1", "T2", "T3", "T4"}:
+        selected_exam = "ALL"
+    _, _, rows = _build_live_followup_rows(
+        module, selected_mentor, selected_type, selected_week, selected_exam if selected_exam != "ALL" else "all"
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Live Followup"
+
+    headers = [
+        "Mentor",
+        "Roll No.",
+        "Enrollment No.",
+        "Name of Students",
+        "Followup Type",
+        "Status",
+        "Date of Phone Call",
+        "Call Duration (Mins)",
+        "Reason of Phone Call",
+        "Remarks by Parents",
+    ]
+    ws.append(headers)
+
+    for r in rows:
+        ws.append(
+            [
+                r["mentor"],
+                r["roll_no"],
+                r["enrollment"],
+                r["student_name"],
+                r["followup_label"],
+                r["status"],
+                f'{r["date_text"]} {r["time_text"]}',
+                r["duration"],
+                r["reason"],
+                r["remarks"],
+            ]
+        )
+
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = 'attachment; filename="live_followup_sheet.xlsx"'
+    wb.save(response)
+    return response
+
+
+@login_required
+def live_followup_sheet_pdf(request):
+    if "mentor" in request.session:
+        return redirect("/mentor-dashboard/")
+
+    module = _active_module(request)
+    selected_mentor = (request.GET.get("mentor") or "").strip()
+    selected_type = (request.GET.get("type") or "all").strip().lower()
+    selected_week_raw = (request.GET.get("week") or "").strip()
+    selected_exam = (request.GET.get("exam") or "ALL").strip().upper()
+    selected_week = int(selected_week_raw) if selected_week_raw.isdigit() else None
+    if selected_exam not in {"ALL", "T1", "T2", "T3", "T4"}:
+        selected_exam = "ALL"
+    _, _, rows = _build_live_followup_rows(
+        module, selected_mentor, selected_type, selected_week, selected_exam if selected_exam != "ALL" else "all"
+    )
+
+    response = HttpResponse(content_type="application/pdf")
+    response["Content-Disposition"] = 'attachment; filename="live_followup_sheet.pdf"'
+
+    doc = SimpleDocTemplate(
+        response,
+        pagesize=landscape(A4),
+        leftMargin=12,
+        rightMargin=12,
+        topMargin=14,
+        bottomMargin=12,
+    )
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph(f"Live Followup Sheet - {module.name}", styles["Heading3"]),
+        Spacer(1, 6),
+    ]
+
+    table_data = [
+        [
+            "Mentor",
+            "Roll No.",
+            "Enrollment No.",
+            "Name of Students",
+            "Followup Type",
+            "Status",
+            "Date of Phone Call",
+            "Call Duration (Mins)",
+            "Reason of Phone Call",
+            "Remarks by Parents",
+        ]
+    ]
+
+    for r in rows:
+        table_data.append(
+            [
+                r["mentor"],
+                str(r["roll_no"] or "-"),
+                r["enrollment"] or "-",
+                r["student_name"] or "-",
+                r["followup_label"] or "-",
+                r["status"] or "-",
+                f'{r["date_text"]} {r["time_text"]}',
+                str(r["duration"] or "-"),
+                r["reason"] or "-",
+                r["remarks"] or "-",
+            ]
+        )
+
+    tbl = Table(
+        table_data,
+        repeatRows=1,
+        colWidths=[66, 38, 85, 110, 70, 62, 88, 56, 110, 80],
+    )
+    tbl.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+            ]
+        )
+    )
+    story.append(tbl)
+    doc.build(story)
+    return response
 
 
 @login_required

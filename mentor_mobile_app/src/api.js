@@ -121,3 +121,102 @@ export function saveOtherCall(token, payload) {
     token
   );
 }
+
+export function staffLogin(username, password) {
+  return request("/api/mobile/staff/login/", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function getStaffModules(token, moduleId = "") {
+  const query = moduleId ? `?module_id=${moduleId}` : "";
+  return request(`/api/mobile/staff/modules/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffStudents(token, moduleId = "", opts = {}) {
+  const params = [];
+  if (moduleId) params.push(`module_id=${moduleId}`);
+  if (opts.page) params.push(`page=${opts.page}`);
+  if (opts.page_size) params.push(`page_size=${opts.page_size}`);
+  if (opts.q) params.push(`q=${encodeURIComponent(opts.q)}`);
+  const query = params.length ? `?${params.join("&")}` : "";
+  return request(`/api/mobile/staff/students/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffWeeks(token, moduleId = "") {
+  const query = moduleId ? `?module_id=${moduleId}` : "";
+  return request(`/api/mobile/staff/weeks/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffAttendance(token, week, moduleId = "") {
+  const query = `?week=${week}${moduleId ? `&module_id=${moduleId}` : ""}`;
+  return request(`/api/mobile/staff/attendance/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffResultCycles(token, moduleId = "") {
+  const query = moduleId ? `?module_id=${moduleId}` : "";
+  return request(`/api/mobile/staff/result-cycles/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffResultRows(token, uploadId = "", moduleId = "", opts = {}) {
+  const params = [];
+  if (uploadId) params.push(`upload_id=${uploadId}`);
+  if (moduleId) params.push(`module_id=${moduleId}`);
+  if (opts.page) params.push(`page=${opts.page}`);
+  if (opts.page_size) params.push(`page_size=${opts.page_size}`);
+  if (opts.q) params.push(`q=${encodeURIComponent(opts.q)}`);
+  if (opts.fail_filter) params.push(`fail_filter=${encodeURIComponent(opts.fail_filter)}`);
+  const query = params.length ? `?${params.join("&")}` : "";
+  return request(`/api/mobile/staff/result-rows/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffControlSummary(token, moduleId = "", week = "", uploadId = "") {
+  const params = [];
+  if (moduleId) params.push(`module_id=${moduleId}`);
+  if (week) params.push(`week=${week}`);
+  if (uploadId) params.push(`upload_id=${uploadId}`);
+  const query = params.length ? `?${params.join("&")}` : "";
+  return request(`/api/mobile/staff/control-summary/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffAttendanceReport(token, moduleId = "", week = "") {
+  const params = [];
+  if (moduleId) params.push(`module_id=${moduleId}`);
+  if (week) params.push(`week=${week}`);
+  const query = params.length ? `?${params.join("&")}` : "";
+  return request(`/api/mobile/staff/attendance-report/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffResultReport(token, moduleId = "", uploadId = "") {
+  const params = [];
+  if (moduleId) params.push(`module_id=${moduleId}`);
+  if (uploadId) params.push(`upload_id=${uploadId}`);
+  const query = params.length ? `?${params.join("&")}` : "";
+  return request(`/api/mobile/staff/result-report/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffSubjects(token, moduleId = "") {
+  const query = moduleId ? `?module_id=${moduleId}` : "";
+  return request(`/api/mobile/staff/subjects/${query}`, { method: "GET" }, token);
+}
+
+export function getStaffHomeSummary(token) {
+  return request("/api/mobile/staff/home-summary/", { method: "GET" }, token);
+}
+
+export function getStaffModulesManage(token) {
+  return request("/api/mobile/staff/modules-manage/", { method: "GET" }, token);
+}
+
+export function createStaffModule(token, payload) {
+  return request("/api/mobile/staff/modules-manage/", { method: "POST", body: JSON.stringify(payload) }, token);
+}
+
+export function toggleStaffModule(token, moduleId, action) {
+  return request(
+    "/api/mobile/staff/module-toggle/",
+    { method: "POST", body: JSON.stringify({ module_id: moduleId, action }) },
+    token
+  );
+}
